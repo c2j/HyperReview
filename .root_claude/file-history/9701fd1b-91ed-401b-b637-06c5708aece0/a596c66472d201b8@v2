@@ -1,0 +1,5 @@
+//! Actions module for HyperReview
+//!
+//! Contains all GPUI Actions for state mutations.
+
+// Actions will be added in Phase 5

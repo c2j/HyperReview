@@ -1,0 +1,11 @@
+//! Services module for HyperReview
+//!
+//! Contains all business logic and external service integrations.
+
+pub mod db;
+pub mod git;
+pub mod highlight;
+
+pub use db::DbService;
+pub use git::GitService;
+pub use highlight::HighlightService;

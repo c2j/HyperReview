@@ -1,0 +1,81 @@
+//! Workspace root view for HyperReview
+//!
+//! Following Constitution IV: All UI elements MUST be implemented as GPUI Views.
+
+use gpui::*;
+use std::sync::Arc;
+
+use crate::app::AppState;
+
+/// Root workspace view
+pub struct Workspace {
+    app_state: Arc<AppState>,
+}
+
+impl Workspace {
+    /// Create new workspace view
+    pub fn new(app_state: Arc<AppState>, _cx: &mut ViewContext<Self>) -> Self {
+        Self { app_state }
+    }
+}
+
+impl Render for Workspace {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .flex()
+            .flex_col()
+            .size_full()
+            .bg(rgb(0x1e1e2e))
+            .text_color(rgb(0xcdd6f4))
+            .child(
+                // Title bar area
+                div()
+                    .h(px(40.0))
+                    .w_full()
+                    .bg(rgb(0x181825))
+                    .flex()
+                    .items_center()
+                    .px_4()
+                    .child("HyperReview - PR Review Tool"),
+            )
+            .child(
+                // Main content area
+                div()
+                    .flex_1()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_4()
+                            .items_center()
+                            .child("Welcome to HyperReview")
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .text_color(rgb(0x6c7086))
+                                    .child("Phase 1: The Reader - Local Diff Viewer"),
+                            ),
+                    ),
+            )
+            .child(
+                // Status bar
+                div()
+                    .h(px(24.0))
+                    .w_full()
+                    .bg(rgb(0x181825))
+                    .flex()
+                    .items_center()
+                    .px_4()
+                    .text_xs()
+                    .text_color(rgb(0x6c7086))
+                    .child(if self.app_state.is_online {
+                        "● Online"
+                    } else {
+                        "○ Offline"
+                    }),
+            )
+    }
+}

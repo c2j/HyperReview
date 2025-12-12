@@ -1,0 +1,275 @@
+//! Syntax highlighting service for HyperReview
+//!
+//! Tree-sitter integration following Constitution I (Performance-First) requirements.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+use tree_sitter::Parser;
+use tree_sitter::Language;
+
+use crate::models::{HighlightRange, HighlightCategory};
+
+/// Language support for syntax highlighting
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SupportedLanguage {
+    Rust,
+    JavaScript,
+    TypeScript,
+    Python,
+    Go,
+    Json,
+    Markdown,
+    Bash,
+}
+
+impl SupportedLanguage {
+    /// Get file extensions for this language
+    pub fn extensions(&self) -> &'static [&'static str] {
+        match self {
+            SupportedLanguage::Rust => &["rs"],
+            SupportedLanguage::JavaScript => &["js", "mjs", "cjs"],
+            SupportedLanguage::TypeScript => &["ts", "tsx"],
+            SupportedLanguage::Python => &["py"],
+            SupportedLanguage::Go => &["go"],
+            SupportedLanguage::Json => &["json"],
+            SupportedLanguage::Markdown => &["md", "markdown"],
+            SupportedLanguage::Bash => &["sh", "bash"],
+        }
+    }
+
+    /// Check if a file path matches this language
+    pub fn from_path(path: &str) -> Option<Self> {
+        let path_lower = path.to_lowercase();
+        for lang in [
+            SupportedLanguage::Rust,
+            SupportedLanguage::JavaScript,
+            SupportedLanguage::TypeScript,
+            SupportedLanguage::Python,
+            SupportedLanguage::Go,
+            SupportedLanguage::Json,
+            SupportedLanguage::Markdown,
+            SupportedLanguage::Bash,
+        ] {
+            for ext in lang.extensions() {
+                if path_lower.ends_with(&format!(".{}", ext)) {
+                    return Some(lang);
+                }
+            }
+        }
+        None
+    }
+
+    /// Get tree-sitter language for this language
+    pub fn language(&self) -> Language {
+        match self {
+            SupportedLanguage::Rust => tree_sitter_rust::language(),
+            SupportedLanguage::JavaScript => tree_sitter_javascript::language(),
+            SupportedLanguage::TypeScript => tree_sitter_typescript::language_typescript(),
+            SupportedLanguage::Python => tree_sitter_python::language(),
+            SupportedLanguage::Go => tree_sitter_go::language(),
+            _ => {
+                panic!("Language not yet supported: {:?}", self);
+            }
+        }
+    }
+}
+
+/// Syntax highlighting service
+pub struct HighlightService {
+    parsers: HashMap<SupportedLanguage, Parser>,
+}
+
+impl HighlightService {
+    /// Create new highlighting service
+    pub fn new() -> Self {
+        let mut parsers = HashMap::new();
+
+        // Initialize parsers for supported languages
+        let languages = [
+            SupportedLanguage::Rust,
+            SupportedLanguage::JavaScript,
+            SupportedLanguage::TypeScript,
+            SupportedLanguage::Python,
+            SupportedLanguage::Go,
+        ];
+
+        for lang in languages {
+            let mut parser = Parser::new();
+            parser.set_language(lang.language()).unwrap_or_else(|e| {
+                eprintln!("Warning: Failed to set language parser for {:?}: {}", lang, e);
+                panic!("Failed to initialize parser for {:?}", lang);
+            });
+            parsers.insert(lang, parser);
+        }
+
+        Self { parsers }
+    }
+
+    /// Detect language from file path
+    pub fn detect_language(&self, path: &str) -> Option<SupportedLanguage> {
+        SupportedLanguage::from_path(path)
+    }
+
+    /// Highlight code and return highlight ranges
+    pub fn highlight_code(
+        &mut self,
+        code: &str,
+        language: SupportedLanguage,
+    ) -> Vec<HighlightRange> {
+        if let Some(parser) = self.parsers.get_mut(&language) {
+            if let Some(tree) = parser.parse(code, None) {
+                let root_node = tree.root_node();
+                let mut ranges = Vec::new();
+
+                self.extract_highlights(code, root_node, &mut ranges);
+                return ranges;
+            } else {
+                eprintln!("Warning: Parse returned None");
+            }
+        }
+
+        Vec::new()
+    }
+
+    /// Extract highlight ranges from syntax tree
+    fn extract_highlights(
+        &self,
+        code: &str,
+        node: tree_sitter::Node,
+        ranges: &mut Vec<HighlightRange>,
+    ) {
+        let node_type = node.kind();
+        let start_byte = node.start_byte();
+        let end_byte = node.end_byte();
+
+        // Map node types to highlight categories
+        if let Some(category) = self.node_type_to_category(node_type) {
+            let range = std::ops::Range {
+                start: start_byte,
+                end: end_byte,
+            };
+            ranges.push(HighlightRange {
+                range,
+                category,
+            });
+        }
+
+        // Recursively process children
+        for i in 0..node.named_child_count() {
+            let child = node.named_child(i).unwrap();
+            self.extract_highlights(code, child, ranges);
+        }
+    }
+
+    /// Map tree-sitter node types to highlight categories
+    fn node_type_to_category(&self, node_type: &str) -> Option<HighlightCategory> {
+        match node_type {
+            // Keywords
+            "struct" | "enum" | "impl" | "trait" | "fn" | "let" | "mut" | "if" | "else" | "match"
+            | "for" | "while" | "return" | "pub" | "mod" | "use" | "extern" | "crate" | "self"
+            | "super" | "const" | "static" | "type" | "unsafe" | "async" | "await" | "break"
+            | "continue" | "loop" | "match" | "move" | "if let" | "while let" => Some(HighlightCategory::Keyword),
+
+            // Functions
+            "function_declaration" | "function_item" | "call_expression" | "method_call_expression" => {
+                Some(HighlightCategory::Function)
+            }
+
+            // Types
+            "type_identifier" | "integer_type" | "floating_point_type" | "primitive_type" => {
+                Some(HighlightCategory::Type)
+            }
+
+            // Variables
+            "identifier" | "field_expression" => Some(HighlightCategory::Variable),
+
+            // Strings
+            "string" | "raw_string" | "string_literal" => Some(HighlightCategory::String),
+
+            // Numbers
+            "integer_literal" | "float_literal" => Some(HighlightCategory::Number),
+
+            // Comments
+            "line_comment" | "block_comment" | "comment" => Some(HighlightCategory::Comment),
+
+            // Operators
+            "operator" | "binary_expression" | "unary_expression" => Some(HighlightCategory::Operator),
+
+            // Punctuation
+            "(" | ")" | "{" | "}" | "[" | "]" | ";" | "," | "." | ":" | "::" | "?" => {
+                Some(HighlightCategory::Punctuation)
+            }
+
+            // Properties
+            "field_expression" | "property_identifier" => Some(HighlightCategory::Property),
+
+            // Constants
+            "const_item" => Some(HighlightCategory::Constant),
+
+            _ => None,
+        }
+    }
+
+    /// Get all supported languages
+    pub fn supported_languages(&self) -> Vec<SupportedLanguage> {
+        self.parsers.keys().copied().collect()
+    }
+}
+
+impl Default for HighlightService {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_language_detection() {
+        let service = HighlightService::new();
+
+        assert_eq!(
+            service.detect_language("test.rs"),
+            Some(SupportedLanguage::Rust)
+        );
+        assert_eq!(
+            service.detect_language("test.ts"),
+            Some(SupportedLanguage::TypeScript)
+        );
+        assert_eq!(
+            service.detect_language("test.py"),
+            Some(SupportedLanguage::Python)
+        );
+        assert_eq!(service.detect_language("test.txt"), None);
+    }
+
+    #[test]
+    fn test_highlight_rust_code() {
+        let service = HighlightService::new();
+        let code = r#"
+fn main() {
+    let x: i32 = 42;
+    println!("Hello, world!");
+}
+"#;
+
+        let ranges = service.highlight_code(code, SupportedLanguage::Rust);
+        assert!(!ranges.is_empty());
+    }
+
+    #[test]
+    fn test_highlight_js_code() {
+        let service = HighlightService::new();
+        let code = r#"
+function hello() {
+    const x = 42;
+    return "world";
+}
+"#;
+
+        let ranges = service.highlight_code(code, SupportedLanguage::JavaScript);
+        assert!(!ranges.is_empty());
+    }
+}

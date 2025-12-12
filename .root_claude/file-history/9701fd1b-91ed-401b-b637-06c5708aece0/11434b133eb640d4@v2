@@ -1,0 +1,7 @@
+//! Views module for HyperReview
+//!
+//! Contains all GPUI View components.
+
+pub mod workspace;
+
+pub use workspace::Workspace;

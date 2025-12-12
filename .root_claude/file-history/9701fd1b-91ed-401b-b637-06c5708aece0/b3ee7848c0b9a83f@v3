@@ -1,0 +1,44 @@
+//! HyperReview - Native, GPU-accelerated PR review application
+//!
+//! This application provides a unified inbox for GitHub PRs with high-performance
+//! diff viewing, syntax highlighting, and keyboard-driven workflow.
+
+use std::sync::Arc;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+mod app;
+mod config;
+mod error;
+mod models;
+mod services;
+mod views;
+mod actions;
+
+use app::AppState;
+use views::Workspace;
+
+fn main() {
+    // Initialize logging
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(tracing_subscriber::EnvFilter::from_default_env())
+        .init();
+
+    tracing::info!("Starting HyperReview...");
+
+    // Initialize application state
+    let app_state = Arc::new(AppState::new(&()));
+
+    // Initialize workspace (simplified for Milestone 1)
+    let _workspace = Workspace::new(app_state, &());
+
+    tracing::info!("HyperReview initialized successfully");
+    tracing::info!("Milestone 1: The Reader - Local Diff Viewer");
+    tracing::info!("Demo: Opening current directory repository");
+
+    // In a full implementation, this would:
+    // 1. Initialize GPUI application
+    // 2. Load demo diff from current repository
+    // 3. Initialize DiffView with loaded diff
+    // 4. Open main window
+}

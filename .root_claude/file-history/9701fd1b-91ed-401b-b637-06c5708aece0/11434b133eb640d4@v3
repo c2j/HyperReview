@@ -1,0 +1,9 @@
+//! Views module for HyperReview
+//!
+//! Contains all GPUI View components.
+
+pub mod workspace;
+pub mod diff;
+
+pub use workspace::Workspace;
+pub use diff::{DiffView, DiffViewEvent, create_diff_view};

@@ -1,0 +1,392 @@
+# Tasks: HyperReview MVP
+
+**Input**: Design documents from `/specs/001-pr-review-mvp/`
+**Prerequisites**: plan.md (required), spec.md (required), data-model.md, contracts/github-api.md, research.md, quickstart.md
+
+**Tests**: Tests are OPTIONAL - included only for critical integration points.
+
+**Organization**: Tasks follow the 3-milestone structure from plan.md, mapped to user stories from spec.md.
+
+## Format: `[ID] [P?] [Story] Description`
+
+- **[P]**: Can run in parallel (different files, no dependencies)
+- **[Story]**: Which user story this task belongs to (US1=Inbox, US2=Diff, US3=Keyboard, US4=Comments)
+- Include exact file paths in descriptions
+
+## Path Conventions
+
+- **Single project**: `src/`, `tests/` at repository root
+- Structure from plan.md: models/, services/, views/, actions/
+
+---
+
+## Phase 1: Setup (Project Initialization)
+
+**Purpose**: Initialize Rust project with GPUI and core dependencies
+
+- [x] T001 Create Cargo.toml with workspace configuration at ./Cargo.toml
+- [x] T002 [P] Add GPUI dependency and configure features in Cargo.toml
+- [x] T003 [P] Add tokio runtime dependency with rt-multi-thread feature in Cargo.toml
+- [x] T004 [P] Add git2-rs dependency in Cargo.toml
+- [x] T005 [P] Add sqlx with sqlite and runtime-tokio features in Cargo.toml
+- [x] T006 [P] Add tree-sitter and tree-sitter-rust dependencies in Cargo.toml
+- [x] T007 [P] Add reqwest with json feature in Cargo.toml
+- [x] T008 [P] Add serde, serde_json, thiserror, uuid, chrono dependencies in Cargo.toml
+- [x] T009 Create project directory structure per plan.md in src/
+- [x] T010 [P] Create src/main.rs with GPUI app entry point
+- [x] T011 [P] Create src/lib.rs with module declarations
+- [x] T012 [P] Configure rustfmt.toml and clippy.toml at project root
+- [x] T013 Create migrations directory at ./migrations/
+
+**Checkpoint**: Project compiles with `cargo build` ✓ COMPLETE
+
+---
+
+## Phase 2: Foundational (Blocking Prerequisites)
+
+**Purpose**: Core infrastructure required by ALL user stories
+
+**CRITICAL**: No user story work can begin until this phase is complete
+
+- [x] T014 Create domain error types with thiserror in src/error.rs
+- [x] T015 [P] Create newtype ID wrappers (RepoId, PrId, CommentId, ReviewId) in src/models/ids.rs
+- [x] T016 [P] Create Provider enum (GitHub, GitLab) in src/models/enums.rs
+- [x] T017 [P] Create PrStatus enum (Open, Closed, Merged) in src/models/enums.rs
+- [x] T018 [P] Create CiStatus enum (Pending, Success, Failure) in src/models/enums.rs
+- [x] T019 [P] Create SyncStatus enum (Pending, Synced, Failed) in src/models/enums.rs
+- [x] T020 [P] Create ReviewDecision enum (Approve, RequestChanges, Comment) in src/models/enums.rs
+- [x] T021 Create src/models/mod.rs with module exports
+- [x] T022 Create AppState struct with GPUI context in src/app.rs
+- [x] T023 [P] Create Workspace root View in src/views/workspace.rs
+- [x] T024 [P] Create src/views/mod.rs with module exports
+- [x] T025 Create src/services/mod.rs with module exports
+- [x] T026 Create src/actions/mod.rs with module exports
+- [x] T027 Create initial SQLite migration in migrations/001_initial_schema.sql
+- [x] T028 Implement DbService with sqlx connection pool in src/services/db.rs
+
+**Checkpoint**: Foundation ready - `cargo run` shows empty GPUI window ✓ COMPLETE
+
+---
+
+## Phase 3: Milestone 1 "The Reader" - US2 Partial (Priority: P2)
+
+**Goal**: Prove diff rendering is faster and more readable than `git diff`
+
+**Independent Test**: Open app with hardcoded repo path, see colored diff with syntax highlighting
+
+### Core Models for Diff
+
+- [ ] T029 [P] [US2] Create Diff struct (computed, not persisted) in src/models/diff.rs
+- [ ] T030 [P] [US2] Create FileDiff struct with path, status, hunks in src/models/diff.rs
+- [ ] T031 [P] [US2] Create Hunk struct with line ranges in src/models/diff.rs
+- [ ] T032 [P] [US2] Create DiffLine struct with LineType enum in src/models/diff.rs
+- [ ] T033 [US2] Create FileStatus enum (Added, Modified, Deleted, Renamed) in src/models/enums.rs
+- [ ] T034 [US2] Create LineType enum (Context, Addition, Deletion) in src/models/enums.rs
+
+### Git Service
+
+- [ ] T035 [US2] Implement GitService struct with git2 Repository wrapper in src/services/git.rs
+- [ ] T036 [US2] Implement open_repository() to open local git repo in src/services/git.rs
+- [ ] T037 [US2] Implement compute_diff(base_sha, head_sha) returning Diff in src/services/git.rs
+- [ ] T038 [US2] Implement diff parsing from git2::Diff to domain Diff in src/services/git.rs
+- [ ] T039 [US2] Wrap git operations in tokio::spawn_blocking in src/services/git.rs
+
+### Syntax Highlighting
+
+- [ ] T040 [P] [US2] Create HighlightService with tree-sitter integration in src/services/highlight.rs
+- [ ] T041 [US2] Implement language detection from file extension in src/services/highlight.rs
+- [ ] T042 [US2] Implement highlight_code() returning highlight ranges in src/services/highlight.rs
+- [ ] T043 [US2] Load tree-sitter grammars for common languages in src/services/highlight.rs
+
+### Diff View (GPUI Editor-based)
+
+- [ ] T044 [US2] Create DiffView struct wrapping GPUI Editor in src/views/diff.rs
+- [ ] T045 [US2] Implement text buffer loading from Diff content in src/views/diff.rs
+- [ ] T046 [US2] Implement TextHighlight for addition lines (green background) in src/views/diff.rs
+- [ ] T047 [US2] Implement TextHighlight for deletion lines (red background) in src/views/diff.rs
+- [ ] T048 [US2] Implement syntax highlighting via highlight ranges in src/views/diff.rs
+- [ ] T049 [US2] Implement BlockDecoration for collapsed unchanged sections in src/views/diff.rs
+- [ ] T050 [US2] Implement hunk header rendering with expand button in src/views/diff.rs
+- [ ] T051 [US2] Implement expand context action for hunk headers in src/views/diff.rs
+
+### Hardcoded Demo Configuration
+
+- [ ] T052 [US2] Create Config struct with hardcoded repo path in src/config.rs
+- [ ] T053 [US2] Wire DiffView into Workspace for demo in src/views/workspace.rs
+- [ ] T054 [US2] Load diff on app startup from hardcoded commits in src/app.rs
+
+**Checkpoint**: Milestone 1 complete - colored diff visible, scrolling smooth at 60fps+
+
+---
+
+## Phase 4: Milestone 2 "The Connector" - US1 Complete + US2 Complete
+
+**Goal**: View real PRs from GitHub
+
+**Independent Test**: Authenticate with GitHub, see PR inbox, select PR to view diff
+
+### Account & Auth Models
+
+- [ ] T055 [P] [US1] Create Account model in src/models/account.rs
+- [ ] T056 [P] [US1] Create Repository model in src/models/repository.rs
+- [ ] T057 [P] [US1] Create PullRequest model in src/models/pull_request.rs
+- [ ] T058 [US1] Add Account table to SQLite migration in migrations/001_initial_schema.sql
+- [ ] T059 [US1] Add repositories table to SQLite migration in migrations/001_initial_schema.sql
+- [ ] T060 [US1] Add pull_requests table to SQLite migration in migrations/001_initial_schema.sql
+
+### GitHub OAuth Service
+
+- [ ] T061 [US1] Create GitHubService struct in src/services/github.rs
+- [ ] T062 [US1] Implement device_flow_start() returning device_code and user_code in src/services/github.rs
+- [ ] T063 [US1] Implement device_flow_poll() polling for access_token in src/services/github.rs
+- [ ] T064 [US1] Implement get_authenticated_user() returning Account in src/services/github.rs
+- [ ] T065 [US1] Implement secure token storage via keyring in src/services/github.rs
+
+### GitHub API Integration
+
+- [ ] T066 [US1] Implement search_review_requests() returning Vec<PullRequest> in src/services/github.rs
+- [ ] T067 [US1] Implement get_pull_request(owner, repo, number) in src/services/github.rs
+- [ ] T068 [US1] Implement get_commit_status(owner, repo, sha) in src/services/github.rs
+- [ ] T069 [US1] Implement rate limit handling with X-RateLimit headers in src/services/github.rs
+- [ ] T070 [US1] Implement error handling for 401/403/404 responses in src/services/github.rs
+
+### Repository Cloning
+
+- [ ] T071 [US2] Implement shallow_clone(url, path, depth=1) in src/services/git.rs
+- [ ] T072 [US2] Implement authenticated clone with access_token in src/services/git.rs
+- [ ] T073 [US2] Implement fetch_commits(repo, shas) for PR diffs in src/services/git.rs
+
+### Database Operations
+
+- [ ] T074 [US1] Implement Account CRUD operations in src/services/db.rs
+- [ ] T075 [US1] Implement Repository CRUD operations in src/services/db.rs
+- [ ] T076 [US1] Implement PullRequest CRUD operations in src/services/db.rs
+- [ ] T077 [US1] Implement inbox query (open PRs, not archived) in src/services/db.rs
+
+### Auth UI
+
+- [ ] T078 [US1] Create AuthView for OAuth device flow in src/views/auth.rs
+- [ ] T079 [US1] Display user_code and verification_uri in AuthView in src/views/auth.rs
+- [ ] T080 [US1] Show polling status and success/failure in AuthView in src/views/auth.rs
+- [ ] T081 [US1] Navigate to InboxView on successful auth in src/views/auth.rs
+
+### Inbox UI
+
+- [ ] T082 [US1] Create InboxView with UniformList in src/views/inbox.rs
+- [ ] T083 [US1] Create PRCard component for list items in src/views/inbox.rs
+- [ ] T084 [US1] Display repo name, title, avatar, CI status, timestamp in PRCard in src/views/inbox.rs
+- [ ] T085 [US1] Implement PR selection state in InboxView in src/views/inbox.rs
+- [ ] T086 [US1] Implement offline indicator when network unavailable in src/views/inbox.rs
+- [ ] T087 [US1] Implement "last synced" timestamp display in src/views/inbox.rs
+
+### PR to Diff Integration
+
+- [ ] T088 [US2] Create ReviewView combining header and DiffView in src/views/review.rs
+- [ ] T089 [US2] Display PR title, description, CI status in ReviewView header in src/views/review.rs
+- [ ] T090 [US2] Trigger shallow clone on PR selection if needed in src/app.rs
+- [ ] T091 [US2] Implement diff prefetch on j/k navigation (pre-select) in src/app.rs
+- [ ] T092 [US2] Load diff from git2 when PR selected in src/app.rs
+
+### Sync Service
+
+- [ ] T093 [US1] Create SyncService for background data refresh in src/services/sync.rs
+- [ ] T094 [US1] Implement periodic inbox refresh (every 5 minutes) in src/services/sync.rs
+- [ ] T095 [US1] Implement network availability detection in src/services/sync.rs
+- [ ] T096 [US1] Cache PR data to SQLite on sync in src/services/sync.rs
+
+**Checkpoint**: Milestone 2 complete - can see real PRs and their diffs
+
+---
+
+## Phase 5: Milestone 3 "The Reviewer" - US3 Complete + US4 Complete
+
+**Goal**: Complete the review loop - usable for actual work
+
+**Independent Test**: Navigate via keyboard, add comments, submit review, verify offline queue
+
+### Comment & Review Models
+
+- [ ] T097 [P] [US4] Create Comment model in src/models/comment.rs
+- [ ] T098 [P] [US4] Create Review model in src/models/review.rs
+- [ ] T099 [US4] Add comments table to SQLite migration in migrations/001_initial_schema.sql
+- [ ] T100 [US4] Add reviews table to SQLite migration in migrations/001_initial_schema.sql
+- [ ] T101 [US4] Add indexes for sync_status queries in migrations/001_initial_schema.sql
+
+### Comment Database Operations
+
+- [ ] T102 [US4] Implement Comment CRUD operations in src/services/db.rs
+- [ ] T103 [US4] Implement pending comments query (sync_status = pending) in src/services/db.rs
+- [ ] T104 [US4] Implement Review CRUD operations in src/services/db.rs
+
+### GitHub Comment API
+
+- [ ] T105 [US4] Implement create_review_comment(pr, path, line, body) in src/services/github.rs
+- [ ] T106 [US4] Implement reply_to_comment(pr, parent_id, body) in src/services/github.rs
+- [ ] T107 [US4] Implement submit_review(pr, decision, body, comments) in src/services/github.rs
+- [ ] T108 [US4] Implement list_comments(pr) for fetching existing comments in src/services/github.rs
+
+### Comment Sync
+
+- [ ] T109 [US4] Implement comment sync (pending → GitHub API → synced) in src/services/sync.rs
+- [ ] T110 [US4] Handle sync failures (set sync_status = failed, store error) in src/services/sync.rs
+- [ ] T111 [US4] Implement retry logic for failed comments in src/services/sync.rs
+- [ ] T112 [US4] Implement review sync with atomic comment submission in src/services/sync.rs
+
+### Comment Input UI
+
+- [ ] T113 [US4] Create CommentInputView inline widget in src/views/comment_input.rs
+- [ ] T114 [US4] Implement text input with markdown support in src/views/comment_input.rs
+- [ ] T115 [US4] Display sync status badge (pending/synced/failed) in src/views/comment_input.rs
+- [ ] T116 [US4] Wire CommentInputView into DiffView at line position in src/views/diff.rs
+
+### Review Submission UI
+
+- [ ] T117 [US4] Create ReviewSubmitView with decision selector in src/views/review_submit.rs
+- [ ] T118 [US4] Display pending comments count in ReviewSubmitView in src/views/review_submit.rs
+- [ ] T119 [US4] Implement review submission action in src/views/review_submit.rs
+
+### Keyboard Navigation Actions
+
+- [ ] T120 [P] [US3] Create MoveDown action (j key) in src/actions/navigation.rs
+- [ ] T121 [P] [US3] Create MoveUp action (k key) in src/actions/navigation.rs
+- [ ] T122 [P] [US3] Create OpenSelected action (Enter key) in src/actions/navigation.rs
+- [ ] T123 [P] [US3] Create NextHunk action (n key) in src/actions/navigation.rs
+- [ ] T124 [P] [US3] Create PrevHunk action (p key) in src/actions/navigation.rs
+- [ ] T125 [P] [US3] Create ToggleSelect action (x key) in src/actions/inbox.rs
+- [ ] T126 [P] [US3] Create Archive action (e key) in src/actions/inbox.rs
+- [ ] T127 [P] [US3] Create StartComment action (r key) in src/actions/review.rs
+- [ ] T128 [P] [US3] Create SubmitComment action (Cmd+Enter) in src/actions/review.rs
+- [ ] T129 [US3] Create OpenCommandPalette action (Cmd+K) in src/actions/navigation.rs
+
+### Keybinding Registration
+
+- [ ] T130 [US3] Register j/k bindings in InboxView in src/views/inbox.rs
+- [ ] T131 [US3] Register Enter binding in InboxView in src/views/inbox.rs
+- [ ] T132 [US3] Register n/p bindings in DiffView in src/views/diff.rs
+- [ ] T133 [US3] Register r binding in DiffView in src/views/diff.rs
+- [ ] T134 [US3] Register Cmd+Enter binding in CommentInputView in src/views/comment_input.rs
+- [ ] T135 [US3] Register x/e bindings in InboxView in src/views/inbox.rs
+- [ ] T136 [US3] Register global Cmd+K binding in Workspace in src/views/workspace.rs
+
+### Command Palette
+
+- [ ] T137 [US3] Create CommandPaletteView in src/views/command_palette.rs
+- [ ] T138 [US3] Implement command search and filtering in src/views/command_palette.rs
+- [ ] T139 [US3] Register common commands (refresh, switch view, etc.) in src/views/command_palette.rs
+
+### Navigation Implementation
+
+- [ ] T140 [US3] Implement MoveDown/MoveUp handlers in InboxView in src/views/inbox.rs
+- [ ] T141 [US3] Implement OpenSelected handler (navigate to ReviewView) in src/views/inbox.rs
+- [ ] T142 [US3] Implement NextHunk/PrevHunk handlers in DiffView in src/views/diff.rs
+- [ ] T143 [US3] Implement ToggleSelect handler for multi-select in src/views/inbox.rs
+- [ ] T144 [US3] Implement Archive handler (set is_archived = true) in src/views/inbox.rs
+
+**Checkpoint**: Milestone 3 complete - can review PRs using keyboard, comments sync
+
+---
+
+## Phase 6: Polish & Cross-Cutting Concerns
+
+**Purpose**: Improvements that affect multiple user stories
+
+- [ ] T145 [P] Add offline detection and graceful degradation in src/services/sync.rs
+- [ ] T146 [P] Implement token refresh before expiration in src/services/github.rs
+- [ ] T147 [P] Add binary file detection in diff view in src/views/diff.rs
+- [ ] T148 [P] Add file rename detection in diff view in src/views/diff.rs
+- [ ] T149 [P] Add large file warning (>10MB) in src/views/diff.rs
+- [ ] T150 [P] Implement "last synced" timestamp across views in src/views/
+- [ ] T151 Performance profiling for <500ms cold start
+- [ ] T152 Memory profiling for <500MB with 10k line diffs
+- [ ] T153 [P] Add keyboard shortcut help modal (? key) in src/views/help.rs
+- [ ] T154 Update src/models/mod.rs exports for all models
+- [ ] T155 Update src/services/mod.rs exports for all services
+- [ ] T156 Update src/views/mod.rs exports for all views
+- [ ] T157 Run quickstart.md validation scenarios
+
+---
+
+## Dependencies & Execution Order
+
+### Phase Dependencies
+
+- **Setup (Phase 1)**: No dependencies - can start immediately
+- **Foundational (Phase 2)**: Depends on Setup completion - BLOCKS all milestones
+- **Milestone 1 (Phase 3)**: Depends on Foundational - delivers US2 partial
+- **Milestone 2 (Phase 4)**: Depends on Milestone 1 - delivers US1 complete + US2 complete
+- **Milestone 3 (Phase 5)**: Depends on Milestone 2 - delivers US3 + US4
+- **Polish (Phase 6)**: Depends on Milestone 3
+
+### User Story Dependencies
+
+| Story | Phase Introduced | Completed In | Dependencies |
+|-------|------------------|--------------|--------------|
+| US2 (Diff) | Phase 3 | Phase 4 | None (can demo with hardcoded repo) |
+| US1 (Inbox) | Phase 4 | Phase 4 | US2 partial (needs diff view to show) |
+| US3 (Keyboard) | Phase 5 | Phase 5 | US1, US2 (needs views to navigate) |
+| US4 (Comments) | Phase 5 | Phase 5 | US1, US2 (needs PR context) |
+
+### Within Each Milestone
+
+- Models before services
+- Services before views
+- Core functionality before enhancements
+- Complete milestone before proceeding to next
+
+### Parallel Opportunities
+
+**Phase 1 (Setup)**: T002-T008 can run in parallel
+**Phase 2 (Foundational)**: T015-T020 can run in parallel, T023-T024 can run in parallel
+**Phase 3 (Milestone 1)**: T029-T032 can run in parallel, T040 parallel with T035-T039
+**Phase 4 (Milestone 2)**: T055-T057 can run in parallel
+**Phase 5 (Milestone 3)**: T097-T098 can run in parallel, T120-T128 can run in parallel
+
+---
+
+## Parallel Example: Milestone 1 Models
+
+```bash
+# Launch all diff model tasks together:
+Task: "Create Diff struct in src/models/diff.rs"
+Task: "Create FileDiff struct in src/models/diff.rs"
+Task: "Create Hunk struct in src/models/diff.rs"
+Task: "Create DiffLine struct in src/models/diff.rs"
+```
+
+---
+
+## Implementation Strategy
+
+### MVP First (Milestone 1 Only)
+
+1. Complete Phase 1: Setup
+2. Complete Phase 2: Foundational
+3. Complete Phase 3: Milestone 1 "The Reader"
+4. **STOP and VALIDATE**: Can see colored diff with syntax highlighting
+5. Demo: "Look how fast and readable compared to git diff!"
+
+### Incremental Delivery
+
+1. Setup + Foundational → Foundation ready
+2. Milestone 1 "The Reader" → Demo local diff viewing
+3. Milestone 2 "The Connector" → Can see real GitHub PRs
+4. Milestone 3 "The Reviewer" → Can actually review and comment
+5. Polish → Production-ready
+
+### Single Developer Strategy
+
+Follow phases sequentially:
+1. Phase 1 → Phase 2 → Phase 3 → Phase 4 → Phase 5 → Phase 6
+2. Each milestone is a deliverable demo
+3. Stop at any checkpoint to validate
+
+---
+
+## Notes
+
+- [P] tasks = different files, no dependencies
+- [Story] label maps task to specific user story for traceability
+- Each milestone is independently demonstrable
+- Verify milestone acceptance criteria before proceeding
+- Commit after each task or logical group
+- Constitution compliance: All UI as GPUI Views, git2-rs only, SQLite offline-first
