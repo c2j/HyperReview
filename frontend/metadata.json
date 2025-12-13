@@ -1,0 +1,5 @@
+{
+  "name": "HyperReview",
+  "description": "A high-performance, zero-latency code review terminal for Tech Leads.",
+  "requestFramePermissions": []
+}
