@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useLayoutEffect } from 'react';
 import { useTranslation } from '../i18n';
-import { X, ChevronRight, ChevronLeft } from 'lucide-react';
+import { X, ChevronRight } from 'lucide-react';
 
 interface TourGuideProps {
   isOpen: boolean;

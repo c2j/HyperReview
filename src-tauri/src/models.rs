@@ -313,3 +313,32 @@ pub struct SyncResult {
 
 // Convenience aliases for backward compatibility
 pub type Repo = Repository;
+
+/// Diff Parameters
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DiffParams {
+    pub file_path: String,
+    pub old_commit: Option<String>,
+    pub new_commit: Option<String>,
+}
+
+/// File Path Parameters
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FilePathParams {
+    pub file_path: String,
+}
+
+/// Comment Parameters
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CommentParams {
+    pub file_path: String,
+    pub line_number: u32,
+    pub content: String,
+}
+
+/// Update Comment Parameters
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateCommentParams {
+    pub comment_id: String,
+    pub content: String,
+}

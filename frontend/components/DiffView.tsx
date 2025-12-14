@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { ReviewSeverity } from '../api/types';
 import type { DiffLine, ReviewTemplate } from '../api/types';
-import { getFileDiff, getReviewTemplates } from '../api/client';
-import { AlertTriangle, XCircle, ChevronDown, Maximize2, Minimize2, Search, X, ArrowUp, ArrowDown, HelpCircle, Check, Wand, ChevronRight, Eye, Package, Box, MoreHorizontal, WrapText, Loader2 } from 'lucide-react';
+import { useApiClient } from '../api/client';
+import { useRepositoryStatus } from '../hooks/useRepository';
+import VirtualDiffViewer from './VirtualDiffViewer';
+import { DiffOptimizer, PerformanceMonitor, DiffCache } from '../utils/diffOptimization';
+import { AlertTriangle, XCircle, ChevronDown, Maximize2, Minimize2, Search, X, ArrowUp, ArrowDown, HelpCircle, Check, Wand, ChevronRight, Eye, Package, Box, WrapText, Loader2 } from 'lucide-react';
 import { useTranslation } from '../i18n';
 
 interface DiffViewProps {
@@ -10,17 +12,34 @@ interface DiffViewProps {
   toggleMaximize: () => void;
   onAction?: (msg: string) => void;
   diffContext?: { base: string; head: string };
+  selectedFile?: string | null;
 }
 
 type ViewMode = 'diff' | 'old' | 'new';
 
-const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onAction, diffContext }) => {
+const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onAction, diffContext, selectedFile }) => {
   const { t } = useTranslation();
-  
+  const { getFileDiff, getReviewTemplates, readFileContent } = useApiClient();
+  const { isRepoLoaded } = useRepositoryStatus();
+
+  // Performance optimization instances
+  const diffOptimizer = useMemo(() => new DiffOptimizer({
+    maxVisibleLines: 1000,
+    chunkSize: 500,
+    enableFolding: true,
+    enableSyntaxHighlighting: false // Disabled for performance
+  }), []);
+
+  const performanceMonitor = useMemo(() => new PerformanceMonitor(), []);
+  const diffCache = useMemo(() => new DiffCache(5), []); // 5 minute cache
+
   // Data State
   const [diffLines, setDiffLines] = useState<DiffLine[]>([]);
+  const [optimizedChunks, setOptimizedChunks] = useState<any[]>([]);
   const [templates, setTemplates] = useState<ReviewTemplate[]>([]);
   const [loading, setLoading] = useState(true);
+  const [filePath, setFilePath] = useState('current-file'); // Default file path
+  const [showFileContent, setShowFileContent] = useState(false); // Show file content when no diff
 
   // View State
   const [viewMode, setViewMode] = useState<ViewMode>('diff');
@@ -45,31 +64,162 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
     lineIndex: null,
   });
 
+  // Update file path when selectedFile changes
+  useEffect(() => {
+    console.log('DiffView: selectedFile changed to:', selectedFile);
+    if (selectedFile) {
+      setFilePath(selectedFile);
+    } else {
+      // If no file is selected, reset to default
+      setFilePath('current-file');
+    }
+  }, [selectedFile]);
+
   // Load Diff Data & Templates
   useEffect(() => {
+    if (!isRepoLoaded) {
+      // No repository loaded, skip loading
+      console.log('No repo loaded, skipping diff load');
+      return;
+    }
+    console.log('Loading diff for file:', filePath);
     setLoading(true);
-    // Fetch diff and templates in parallel
-    Promise.all([
-        getFileDiff('current-file'),
-        getReviewTemplates()
-    ]).then(([diffData, templateData]) => {
-        setDiffLines(diffData);
-        setTemplates(templateData);
-    })
-    .catch(console.error)
-    .finally(() => setLoading(false));
-  }, []);
+    performanceMonitor.startTimer('diff_load');
 
-  // --- Logic for Folding Lines ---
+    // Check cache first
+    const cacheKey = `diff-${filePath || 'current-file'}`;
+    console.log('Cache key:', cacheKey);
+    const cachedDiff = diffCache.get<DiffLine[]>(cacheKey);
+
+    if (cachedDiff) {
+      console.log('Using cached diff data');
+      setDiffLines(cachedDiff);
+      const chunks = diffOptimizer.processDiff(cachedDiff);
+      setOptimizedChunks(chunks);
+      setLoading(false);
+      return;
+    }
+
+    // Fetch diff and templates in parallel
+    // When filePath is provided (e.g., from heatmap), show diff of HEAD vs working directory
+    const fetchDiff = async () => {
+      try {
+        console.log('fetchDiff called with filePath:', filePath);
+        const oldCommit = filePath && filePath !== 'current-file' ? 'HEAD' : undefined;
+        const newCommit = filePath && filePath !== 'current-file' ? undefined : undefined;
+
+        console.log('Requesting diff with oldCommit:', oldCommit, 'newCommit:', newCommit);
+
+        const [diffData, templateData] = await Promise.all([
+          getFileDiff(filePath || 'current-file', oldCommit, newCommit),
+          getReviewTemplates()
+        ]);
+
+        console.log('Diff data received:', diffData.length, 'lines');
+        console.log('Diff data content:', diffData); // Log the actual diff data
+
+        if (diffData.length === 0) {
+          console.log('No diff lines returned for file:', filePath);
+          console.log('This might mean the file has no changes between HEAD and working directory');
+
+          // If we're viewing a specific file (not a diff context), show file content
+          if (filePath && filePath !== 'current-file') {
+            console.log('Attempting to load file content for:', filePath);
+            setShowFileContent(true);
+
+            // Create diff lines showing the entire file content
+            try {
+              const content = await readFileContent(filePath);
+              console.log('File content loaded, length:', content.length, 'characters');
+              console.log('First 200 chars of content:', content.substring(0, 200));
+
+              const lines = content.split('\n').map((line, index) => ({
+                line_number: index + 1,
+                content: line || '', // Ensure content is never null/undefined
+                line_type: 'Context' as const,
+                file_path: filePath,
+                severity: undefined,
+                comments: [],
+                change_type: 'None' as const,
+                old_line_number: index + 1,
+                new_line_number: index + 1
+              }));
+              console.log('Created', lines.length, 'lines from file content');
+              setDiffLines(lines);
+              setOptimizedChunks([]);
+            } catch (err) {
+              console.error('Failed to load file content:', err as Error);
+              console.error('Error details:', {
+                filePath: filePath,
+                errorMessage: (err as Error).message,
+                errorStack: (err as Error).stack
+              });
+              // Set empty lines on error
+              setDiffLines([]);
+              setOptimizedChunks([]);
+            }
+            return;
+          }
+        } else {
+          setShowFileContent(false);
+        }
+
+        // Cache the diff data
+        diffCache.set(cacheKey, diffData);
+
+        // Process with optimizations
+        const chunks = diffOptimizer.processDiff(diffData);
+
+        setDiffLines(diffData);
+        setOptimizedChunks(chunks);
+        setTemplates(templateData);
+
+        const loadTime = performanceMonitor.endTimer('diff_load');
+        console.log(`Diff loaded with ${diffData.length} lines in ${loadTime}ms`);
+
+        // Log memory stats for large files
+        if (diffData.length > 1000) {
+          const stats = diffOptimizer.getMemoryStats();
+          console.log('Memory usage:', stats);
+        }
+      } catch (err) {
+        console.error('Failed to load diff:', err as Error);
+        console.error('Error details:', (err as Error).message || err);
+        console.error('File path that failed:', filePath);
+        // Clear any previous diff data on error
+        setDiffLines([]);
+        setOptimizedChunks([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchDiff();
+  }, [isRepoLoaded, filePath, diffOptimizer, diffCache, performanceMonitor, getFileDiff, getReviewTemplates]);
+
+  // --- Logic for Folding Lines with Optimization ---
   const displayLines = useMemo(() => {
+    // Ensure diffLines is always an array
+    if (!diffLines || !Array.isArray(diffLines)) {
+      return [];
+    }
+
+    // Use optimized chunks for large files
+    if (diffLines.length > 1000 && optimizedChunks.length > 0) {
+      return diffOptimizer.getVisibleLines();
+    }
+
+    // Original folding logic for smaller files
     const lines: DiffLine[] = [];
     let skippingImports = false;
     let skippingLombok = false;
 
     for (let i = 0; i < diffLines.length; i++) {
         const line = diffLines[i];
-        const content = line.content.trim();
-        
+        if (!line) continue; // Skip null/undefined lines
+
+        const content = line.content?.trim() || '';
+
         const isImport = content.startsWith('import ') || (skippingImports && content === '');
         const isLombokAnnotation = content.startsWith('@') || (skippingLombok && content === '');
 
@@ -78,10 +228,10 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
             if (!skippingImports) {
                 skippingImports = true;
                 // Insert a placeholder line for folded imports
-                lines.push({ 
-                    ...line, 
-                    type: 'header', 
-                    content: `import ... (${diffLines.filter(l => l.content.trim().startsWith('import ')).length} lines hidden)`,
+                lines.push({
+                    ...line,
+                    line_type: 'Header',
+                    content: `import ... (${diffLines.filter(l => l?.content?.trim().startsWith('import ')).length} lines hidden)`,
                     isFoldPlaceholder: true,
                     onClick: () => setFoldImports(false)
                 });
@@ -96,9 +246,9 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
             if (!skippingLombok) {
                 skippingLombok = true;
                  // Insert a placeholder line for folded lombok
-                 lines.push({ 
-                    ...line, 
-                    type: 'header', 
+                 lines.push({
+                    ...line,
+                    line_type: 'Header',
                     content: `@Annotations ...`,
                     isFoldPlaceholder: true,
                     onClick: () => setFoldLombok(false)
@@ -112,7 +262,7 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
         lines.push(line);
     }
     return lines;
-  }, [foldImports, foldLombok, viewMode, diffLines]);
+  }, [foldImports, foldLombok, viewMode, diffLines, diffOptimizer, optimizedChunks]);
 
   const toggleSearch = () => {
     setSearchOpen(prev => !prev);
@@ -141,10 +291,11 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
 
   const handleMenuAction = (action: string) => {
     if (onAction) {
-        onAction(`Context Action: ${action} on line ${contextMenu.lineIndex !== null ? diffLines[contextMenu.lineIndex]?.newLineNumber || 'context' : 'unknown'}`);
+        onAction(`Context Action: ${action} on line ${contextMenu.lineIndex !== null ? diffLines[contextMenu.lineIndex]?.new_line_number || 'context' : 'unknown'}`);
     }
     closeContextMenu();
   };
+
 
   // Search Logic
   useEffect(() => {
@@ -163,8 +314,8 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
         if (line.isFoldPlaceholder) return;
         
         // Filter lines based on view mode before searching
-        if (viewMode === 'old' && line.type === 'added') return;
-        if (viewMode === 'new' && line.type === 'removed') return;
+        if (viewMode === 'old' && line.line_type === 'Added') return;
+        if (viewMode === 'new' && line.line_type === 'Removed') return;
         
         if (!line.content) return;
         let match;
@@ -215,7 +366,7 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
       let lastIndex = 0;
       const parts = [];
 
-      lineMatches.forEach((match, i) => {
+      lineMatches.forEach((match) => {
           if (match.start > lastIndex) {
               parts.push(content.substring(lastIndex, match.start));
           }
@@ -245,9 +396,15 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
       <div className="h-[36px] bg-editor-bg border-b border-editor-line flex items-center px-4 justify-between shrink-0 relative z-20">
         <div className="flex items-center gap-2 text-xs truncate mr-4">
             <span className="text-gray-500 hidden sm:inline">{t('diffview.file')}:</span>
-            <span className="text-editor-fg font-medium truncate">src/main/java/.../impl/RetryServiceImpl.java</span>
-            <span className="text-editor-success ml-2 hidden sm:inline">+342</span>
-            <span className="text-editor-error hidden sm:inline">-108</span>
+            <span className="text-editor-fg font-medium truncate">{filePath === 'current-file' ? 'src/main/java/.../impl/RetryServiceImpl.java' : filePath}</span>
+            {showFileContent ? (
+              <span className="text-editor-info text-[10px] ml-2 border border-editor-info/30 px-1 py-0.5 rounded">FILE</span>
+            ) : (
+              <>
+                <span className="text-editor-success ml-2 hidden sm:inline">+342</span>
+                <span className="text-editor-error hidden sm:inline">-108</span>
+              </>
+            )}
         </div>
         
         <div className="flex items-center gap-2 shrink-0">
@@ -311,7 +468,7 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
              </button>
              
              {/* Fold Lombok - Responsive */}
-             <button 
+             <button
                 onClick={() => setFoldLombok(!foldLombok)}
                 className={`flex items-center gap-1.5 text-[10px] px-2 py-0.5 rounded transition-colors ${foldLombok ? 'bg-editor-accent text-white' : 'bg-editor-line text-gray-400 hover:text-white'}`}
                 title={t('diffview.fold_lombok')}
@@ -396,11 +553,11 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
                         templates.map(tpl => (
                             <div 
                                 key={tpl.id} 
-                                onClick={() => handleMenuAction(`Template: ${tpl.label}`)} 
+                                onClick={() => handleMenuAction(`Template: ${tpl.name}`)} 
                                 className="px-3 py-1.5 text-xs text-editor-fg hover:bg-editor-line hover:text-white cursor-pointer whitespace-nowrap"
                                 title={tpl.content}
                             >
-                                {tpl.label}
+                                {tpl.name}
                             </div>
                         ))
                     ) : (
@@ -457,103 +614,26 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
           </div>
         )}
 
-        {displayLines.map((line: any, displayIndex: number) => {
-             // Logic for View Modes
-             if (viewMode === 'old' && line.type === 'added' && !line.isFoldPlaceholder) return null;
-             if (viewMode === 'new' && line.type === 'removed' && !line.isFoldPlaceholder) return null;
-
-             const isFoldedPlaceholder = line.isFoldPlaceholder;
-             
-             // Logic for diff colors (only in diff mode)
-             const isModified = line.type !== 'context';
-             const isAdd = line.type === 'added';
-             const isRemove = line.type === 'removed';
-             
-             let bgClass = '';
-             if (viewMode === 'diff' && !isFoldedPlaceholder) {
-                 if (isAdd) bgClass = 'bg-editor-success/10';
-                 if (isRemove) bgClass = 'bg-editor-error/10';
-             }
-
-             if (isFoldedPlaceholder) {
-                 bgClass = 'bg-editor-line/30 hover:bg-editor-line/50 cursor-pointer';
-             }
-
-             return (
-                <div 
-                    key={displayIndex} 
-                    id={`diff-line-${displayIndex}`} 
-                    className={`flex w-full hover:bg-editor-line/50 group relative ${bgClass} ${isLineWrap ? '' : 'min-w-fit'}`}
-                    onContextMenu={(e) => handleContextMenu(e, displayIndex)}
-                    onClick={line.onClick}
-                >
-                    
-                    {/* Old Line Number - Red tint for Old */}
-                    {(viewMode === 'diff' || viewMode === 'old') && (
-                        <div className={`w-[60px] text-right pr-3 select-none bg-editor-bg border-r border-red-900/30 shrink-0 sticky left-0 z-10 text-red-500/50 ${isFoldedPlaceholder ? '' : 'font-mono text-xs pt-[1px]'}`}>
-                            {isFoldedPlaceholder ? <MoreHorizontal size={12} className="inline opacity-50 text-gray-600" /> : (line.oldLineNumber || '')}
-                        </div>
-                    )}
-
-                    {/* Heatmap Bar - Only in Diff Mode */}
-                    {viewMode === 'diff' && (
-                        <div className="w-[12px] flex items-center justify-center bg-editor-bg shrink-0 sticky left-[60px] z-10">
-                            {!isFoldedPlaceholder && isAdd && <div className="w-1 h-full bg-editor-success opacity-40"></div>}
-                            {!isFoldedPlaceholder && isRemove && <div className="w-1 h-full bg-editor-error opacity-40"></div>}
-                        </div>
-                    )}
-
-                    {/* New Line Number - Green tint for New */}
-                    {(viewMode === 'diff' || viewMode === 'new') && (
-                        <div className={`w-[60px] text-right pr-3 select-none bg-editor-bg border-r border-green-900/30 shrink-0 sticky z-10 text-green-500/50 ${viewMode === 'diff' ? 'left-[72px]' : 'left-0'} ${isFoldedPlaceholder ? '' : 'font-mono text-xs pt-[1px]'}`}>
-                            {isFoldedPlaceholder ? <MoreHorizontal size={12} className="inline opacity-50 text-gray-600" /> : (line.newLineNumber || '')}
-                        </div>
-                    )}
-
-                    {/* Code Content */}
-                    <div className={`flex-1 px-4 relative min-w-0 flex items-center ${isLineWrap ? 'whitespace-pre-wrap break-all' : 'whitespace-pre'}`}>
-                        {isFoldedPlaceholder ? (
-                            <span className="text-gray-500 italic select-none flex items-center gap-2 text-xs">
-                                <ChevronRight size={12} /> {line.content}
-                            </span>
-                        ) : (
-                            <>
-                                <span className={(viewMode === 'diff' && isRemove) ? 'line-through text-gray-500 opacity-70' : ''}>
-                                    {renderLineContent(line.content, displayIndex)}
-                                </span>
-
-                                {/* Inline Warning/Error Markers - Keep these visible in New & Diff modes */}
-                                {(viewMode === 'diff' || viewMode === 'new') && line.severity === ReviewSeverity.WARNING && (
-                                    <div className="absolute left-0 bottom-0 w-full h-[2px] bg-orange-500/50" style={{backgroundImage: 'url("data:image/svg+xml;base64,PHN2ZyB4bWxucz0naHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmcnIHdpZHRoPSc0JyBoZWlnaHQ9JzQnPjxwYXRoIGQ9J00wIDQgTDIgMiBMNCA0JyBzdHJva2U9JyNmZjg4MDAnIGZpbGw9J25vbmUnLz48L3N2Zz4=")'}}></div>
-                                )}
-                                {(viewMode === 'diff' || viewMode === 'new') && line.severity === ReviewSeverity.ERROR && (
-                                    <div className="absolute inset-0 border border-editor-error/50 bg-editor-error/5 pointer-events-none"></div>
-                                )}
-                            </>
-                        )}
-                    </div>
-                     
-                    {/* Right Gutter Icons for Issues */}
-                    {(viewMode === 'diff' || viewMode === 'new') && line.severity && !isFoldedPlaceholder && (
-                        <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-2">
-                             {line.severity === ReviewSeverity.WARNING && (
-                                <div className="flex items-center gap-1 bg-editor-bg border border-editor-warning text-editor-warning text-[10px] px-2 py-0.5 rounded shadow-lg z-10 cursor-help">
-                                    <AlertTriangle size={12} />
-                                    <span>{line.message}</span>
-                                </div>
-                             )}
-                             {line.severity === ReviewSeverity.ERROR && (
-                                 <div className="flex items-center gap-1 bg-editor-bg border border-editor-error text-editor-error text-[10px] px-2 py-0.5 rounded shadow-lg z-10 cursor-help">
-                                    <XCircle size={12} />
-                                    <span>{line.message}</span>
-                                </div>
-                             )}
-                        </div>
-                    )}
-
-                </div>
-             );
-        })}
+        {/* Virtual Diff Viewer for large files with smooth scrolling */}
+        <VirtualDiffViewer
+          diffLines={displayLines}
+          viewMode={viewMode}
+          isLineWrap={isLineWrap}
+          height={600}
+          lineHeight={24}
+          showLineNumbers={true}
+          showHeatmap={true}
+          searchTerm={searchTerm}
+          currentMatchIndex={currentMatchIdx}
+          matches={matches}
+          onLineClick={(line, index) => {
+            // Handle line click - add comment or other actions
+            console.log('Line clicked:', line, index);
+          }}
+          onContextMenu={(e, _line, index) => handleContextMenu(e, index)}
+          renderLineContent={renderLineContent}
+          isFileContent={showFileContent}
+        />
         {/* Fill empty space */}
         <div className="flex-1 bg-editor-bg"></div>
       </div>

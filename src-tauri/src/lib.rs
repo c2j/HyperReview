@@ -119,10 +119,12 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // Repository management commands
             commands::open_repo_dialog,
+            commands::open_repo_dialog_frontend,
             commands::get_recent_repos,
             commands::get_branches,
             commands::load_repo,
@@ -130,6 +132,9 @@ pub fn run() {
             // Review workflow commands
             commands::get_file_diff,
             commands::add_comment,
+            commands::update_comment,
+            commands::delete_comment,
+            commands::get_comments,
 
             // Task management commands
             commands::get_tasks,
@@ -144,6 +149,7 @@ pub fn run() {
             commands::get_heatmap,
             commands::get_checklist,
             commands::get_blame,
+            commands::read_file_content,
             commands::analyze_complexity,
             commands::scan_security,
 

@@ -38,7 +38,13 @@ impl HeatmapGenerator {
     pub fn generate_from_git(&self, repo_path: &str) -> Result<Vec<HeatmapItem>, Box<dyn std::error::Error>> {
         log::info!("Generating heatmap for repository: {}", repo_path);
 
-        let repo = git2::Repository::open(repo_path)?;
+        let repo = match git2::Repository::open(repo_path) {
+            Ok(repo) => repo,
+            Err(e) => {
+                log::error!("Failed to open repository at {}: {}", repo_path, e);
+                return Err(Box::new(e));
+            }
+        };
 
         // Walk through recent commits to analyze file churn
         let mut file_churn: HashMap<String, u32> = HashMap::new();
@@ -78,7 +84,10 @@ impl HeatmapGenerator {
             }
         }
 
+        log::info!("Analyzed {} commits, found {} changed files", commit_count, file_churn.len());
+
         // Convert to heatmap items
+        log::info!("Converting file churn to heatmap items...");
         let mut items: Vec<HeatmapItem> = file_churn
             .into_iter()
             .map(|(file_path, change_frequency)| {
@@ -120,6 +129,7 @@ impl HeatmapGenerator {
         // Sort by impact score (descending)
         items.sort_by(|a, b| b.impact_score.partial_cmp(&a.impact_score).unwrap_or(std::cmp::Ordering::Equal));
 
+        log::info!("Successfully generated {} heatmap items", items.len());
         Ok(items)
     }
 

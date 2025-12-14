@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Search, Folder, GitBranch, Clock, ArrowRight, FolderOpen } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getRecentRepos, openLocalRepoDialog } from '../api/client';
+import { useApiClient } from '../api/client';
 import type { Repo } from '../api/types';
 
 interface OpenRepoModalProps {
@@ -11,6 +11,7 @@ interface OpenRepoModalProps {
 
 const OpenRepoModal: React.FC<OpenRepoModalProps> = ({ onClose, onOpen }) => {
   const { t } = useTranslation();
+  const { getRecentRepos, openRepoDialog } = useApiClient();
   const [selected, setSelected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [repos, setRepos] = useState<Repo[]>([]);
@@ -30,15 +31,17 @@ const OpenRepoModal: React.FC<OpenRepoModalProps> = ({ onClose, onOpen }) => {
 
   const handleBrowseLocal = async () => {
     try {
-        const path = await openLocalRepoDialog();
+        const path = await openRepoDialog();
         if (path) {
             // Check if already in list to avoid duplicates
             const existing = repos.find(r => r.path === path);
             if (!existing) {
                 const newRepo: Repo = {
                     path: path,
-                    branch: 'HEAD', // Default for new repo
-                    lastOpened: 'Just now'
+                    current_branch: 'HEAD', // Default for new repo
+                    last_opened: new Date().toISOString(),
+                    head_commit: '',
+                    is_active: false
                 };
                 setRepos([newRepo, ...repos]);
             }
@@ -94,9 +97,9 @@ const OpenRepoModal: React.FC<OpenRepoModalProps> = ({ onClose, onOpen }) => {
                 <div className="flex flex-col flex-1 min-w-0">
                   <span className="text-xs font-medium truncate font-mono">{repo.path}</span>
                   <div className="flex items-center gap-2 text-[10px] opacity-70">
-                    <span className="flex items-center gap-1"><Clock size={10} /> {repo.lastOpened}</span>
+                    <span className="flex items-center gap-1"><Clock size={10} /> {new Date(repo.last_opened).toLocaleString()}</span>
                     <span className="flex items-center gap-1 text-gray-500">|</span>
-                    <span className="flex items-center gap-1"><GitBranch size={10} /> {repo.branch}</span>
+                    <span className="flex items-center gap-1"><GitBranch size={10} /> {repo.current_branch}</span>
                   </div>
                 </div>
                 {selected === repo.path && <ArrowRight size={14} className="text-editor-accent" />}

@@ -249,6 +249,44 @@ impl Database {
         Ok(comments)
     }
 
+    /// Get a single comment by ID
+    pub fn get_comment(&self, comment_id: &str) -> Result<Option<Comment>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, file_path, line_number, content, author, created_at, updated_at, status, parent_id, tags
+             FROM comments
+             WHERE id = ?1"
+        )?;
+
+        let mut comment_iter = stmt.query_map([comment_id], |row| {
+            Ok(Comment {
+                id: row.get("id")?,
+                file_path: row.get("file_path")?,
+                line_number: row.get("line_number")?,
+                content: row.get("content")?,
+                author: row.get("author")?,
+                created_at: row.get("created_at")?,
+                updated_at: row.get("updated_at")?,
+                status: match row.get::<_, String>("status")?.as_str() {
+                    "Draft" => CommentStatus::Draft,
+                    "Submitted" => CommentStatus::Submitted,
+                    "Rejected" => CommentStatus::Rejected,
+                    _ => CommentStatus::Draft,
+                },
+                parent_id: row.get("parent_id")?,
+                tags: row.get::<_, String>("tags")?
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(String::from)
+                    .collect(),
+            })
+        })?;
+
+        match comment_iter.next() {
+            Some(comment_result) => comment_result.map(Some),
+            None => Ok(None),
+        }
+    }
+
     /// Update an existing comment
     pub fn update_comment(&self, comment: &Comment) -> Result<(), rusqlite::Error> {
         log::info!("Updating comment: {}", comment.id);

@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+license = "MIT OR Apache-2.0"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -21,6 +22,7 @@ tauri-build = { version = "2", features = [] }
 # Tauri
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
+tauri-plugin-dialog = "2"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -80,4 +82,30 @@ base64 = "0.22"
 
 # Random
 rand = "0.8"
+
+# Security: Force upgrade of idna to fix RUSTSEC-2024-0421
+idna = "1.0.3"
+
+# =============================================================================
+# Release Profile Optimizations for Bundle Size
+# =============================================================================
+
+[profile.release]
+# Link Time Optimization for smaller binary size
+lto = true
+
+# Optimize for size
+opt-level = "s"
+
+# Single codegen unit for better optimization
+codegen-units = 1
+
+# Abort on panic to reduce binary size
+panic = "abort"
+
+# Strip debug symbols
+strip = true
+
+# Enable incremental compilation for faster builds (trade-off with size)
+incremental = false
 

@@ -59,24 +59,40 @@ impl DiffEngine {
             }
         };
 
-        // Create diff between trees
-        let diff = if let (Some(old), Some(new)) = (old_tree, new_tree) {
-            self.repository.diff_tree_to_tree(Some(&old), Some(&new), None)?
-        } else {
-            // For now, just return an empty diff if we don't have both trees
-            // TODO: Implement diff with working directory
-            return Ok(Vec::new());
+        // Create diff between trees or against working directory
+        let diff = match (old_tree, new_tree) {
+            (Some(old), Some(new)) => {
+                // Diff between two commits
+                self.repository.diff_tree_to_tree(Some(&old), Some(&new), None)?
+            }
+            (Some(old), None) => {
+                // Diff between a commit and working directory
+                let mut diff_options = git2::DiffOptions::new();
+                diff_options.include_untracked(true);
+
+                // Create diff between old tree and working directory with index
+                self.repository.diff_tree_to_workdir_with_index(Some(&old), None)?
+            }
+            (None, Some(new)) => {
+                // Diff from empty to a commit (shouldn't normally happen)
+                self.repository.diff_tree_to_tree(None, Some(&new), None)?
+            }
+            (None, None) => {
+                // Both are None - return empty diff
+                return Ok(Vec::new());
+            }
         };
 
         // Parse diff into lines
         self.parse_diff(diff, file_path)
     }
 
-    /// Parse git diff into structured DiffLine objects
+    /// Parse git diff into structured DiffLine objects for a specific file
     fn parse_diff(&self, diff: Diff, file_path: &str) -> Result<Vec<DiffLine>, HyperReviewError> {
         let mut lines = Vec::new();
         let mut old_line_num = 0;
         let mut new_line_num = 0;
+        let mut in_target_file = false;
 
         // Get the patch (unified diff format)
         let mut patch = Vec::new();
@@ -91,6 +107,31 @@ impl DiffEngine {
             let line = line.map_err(|e| HyperReviewError::Other {
                 message: format!("Failed to read diff line: {}", e),
             })?;
+
+            // Check if this is the start of a new file diff
+            if line.starts_with("diff --git") {
+                // Extract filenames from diff header
+                // Format: diff --git a/old_path b/new_path
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() >= 3 {
+                    let old_file = parts[1].strip_prefix("a/").unwrap_or(parts[1]);
+                    let new_file = parts[2].strip_prefix("b/").unwrap_or(parts[2]);
+
+                    // Check if this diff is for our target file
+                    in_target_file = old_file == file_path || new_file == file_path;
+                }
+                continue;
+            }
+
+            // Skip lines if we're not in the target file
+            if !in_target_file {
+                continue;
+            }
+
+            // Skip file header lines for the target file
+            if line.starts_with("---") || line.starts_with("+++") || line.starts_with("index ") {
+                continue;
+            }
 
             // Parse unified diff format
             if line.starts_with("@@") {
@@ -136,15 +177,8 @@ impl DiffEngine {
                 });
                 old_line_num += 1;
                 new_line_num += 1;
-            } else if line.starts_with("diff --git") {
-                // Skip diff header
-            } else if line.starts_with("index ") {
-                // Skip index line
-            } else if line.starts_with("---") || line.starts_with("+++") {
-                // Skip file headers
-            } else {
-                // Other lines (e.g., "\ No newline at end of file")
             }
+            // Skip other lines (e.g., "\ No newline at end of file")
         }
 
         log::info!("Parsed {} diff lines for {}", lines.len(), file_path);

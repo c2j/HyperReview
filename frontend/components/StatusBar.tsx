@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { Cloud, Radio, Loader2 } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getReviewStats } from '../api/client';
+import { useApiClient } from '../api/client';
 import type { ReviewStats } from '../api/types';
 
 const StatusBar: React.FC = () => {
   const { t } = useTranslation();
+  const { getReviewStats } = useApiClient();
   const [stats, setStats] = useState<ReviewStats | null>(null);
 
   useEffect(() => {
@@ -27,10 +28,10 @@ const StatusBar: React.FC = () => {
         
         {stats ? (
             <>
-                <span className="shrink-0">{stats.totalCount} {t('statusbar.files')}</span>
+                <span className="shrink-0">{stats.total_files} {t('statusbar.files')}</span>
                 <span className="shrink-0">→</span>
                 <span className="shrink-0 truncate">
-                    {t('statusbar.marked')} {stats.reviewedCount} (✗{stats.severeCount} ⚠{stats.warningCount} ❓{stats.pendingCount})
+                    {t('statusbar.marked')} {stats.reviewed_files} (✗{stats.severe_issues} ⚠{stats.total_comments - stats.severe_issues} ❓{stats.pending_files})
                 </span>
             </>
         ) : (

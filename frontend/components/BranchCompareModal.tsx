@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { GitBranch, ArrowRight, ArrowLeftRight, Check, Play, Loader2, ArrowLeft } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getBranches } from '../api/client';
+import { useApiClient } from '../api/client';
 import type { Branch } from '../api/types';
 
 interface BranchCompareModalProps {
@@ -15,6 +15,7 @@ interface BranchCompareModalProps {
 
 const BranchCompareModal: React.FC<BranchCompareModalProps> = ({ currentBase, currentHead, onClose, onApply, isInitialSetup = false, onBack }) => {
   const { t } = useTranslation();
+  const { getBranches } = useApiClient();
   const [base, setBase] = useState(currentBase);
   const [head, setHead] = useState(currentHead);
   const [branches, setBranches] = useState<Branch[]>([]);

@@ -5,6 +5,7 @@ use crate::models::*;
 use crate::AppState;
 use crate::storage;
 use tauri::State;
+use serde::{Serialize, Deserialize};
 
 // Import modules
 use crate::git;
@@ -12,15 +13,33 @@ use crate::analysis;
 use crate::remote;
 
 /// Opens a repository selection dialog
+/// NOTE: This is deprecated. Dialogs should be opened from the frontend using @tauri-apps/plugin-dialog
 #[tauri::command]
 pub async fn open_repo_dialog() -> Result<Option<String>, String> {
-    log::info!("Opening repository selection dialog");
+    log::warn!("open_repo_dialog command is deprecated - frontend should use dialog API directly");
+    Err("Use frontend dialog API instead".to_string())
+}
 
-    // Note: This is a simplified implementation
-    // In a real implementation, the frontend would show the dialog
-    // and pass the result back to the backend
+/// Opens a repository selection dialog from frontend request
+#[tauri::command]
+pub async fn open_repo_dialog_frontend(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    log::info!("Opening repository selection dialog from frontend");
 
-    Ok(None) // Placeholder - frontend will handle the actual dialog
+    // Use Tauri's dialog plugin to open a folder selection dialog
+    use tauri_plugin_dialog::DialogExt;
+
+    // Use blocking API since we're in an async context
+    match app.dialog().file().blocking_pick_folder() {
+        Some(path) => {
+            let path_str = path.to_string();
+            log::info!("User selected repository path: {}", path_str);
+            Ok(Some(path_str))
+        },
+        None => {
+            log::info!("User cancelled repository selection");
+            Ok(None)
+        }
+    }
 }
 
 /// Gets list of recently opened repositories
@@ -65,12 +84,10 @@ pub async fn load_repo(path: String, state: State<'_, AppState>) -> Result<Repo,
 /// Gets file diff with analysis
 #[tauri::command]
 pub async fn get_file_diff(
-    file_path: String,
-    old_commit: Option<String>,
-    new_commit: Option<String>,
+    params: DiffParams,
     state: State<'_, AppState>,
 ) -> Result<Vec<DiffLine>, String> {
-    log::info!("Getting file diff for: {}", file_path);
+    log::info!("Getting file diff for: {}", params.file_path);
 
     // Check if repository is loaded
     let git_service = state.git_service.lock().unwrap();
@@ -89,38 +106,36 @@ pub async fn get_file_diff(
 
     // Compute diff
     let mut diff_lines = diff_engine.compute_file_diff(
-        &file_path,
-        old_commit.as_deref(),
-        new_commit.as_deref(),
+        &params.file_path,
+        params.old_commit.as_deref(),
+        params.new_commit.as_deref(),
     )
     .map_err(|e| e.to_string())?;
 
     // Perform static analysis
     let analysis_engine = analysis::engine::AnalysisEngine::new();
-    analysis_engine.analyze_diff_lines(&mut diff_lines, &file_path)
+    analysis_engine.analyze_diff_lines(&mut diff_lines, &params.file_path)
         .map_err(|e| e.to_string())?;
 
     // Cache the computed diff
     let cache_key = storage::cache::CacheManager::generate_diff_key(
-        &file_path,
-        old_commit.as_deref(),
-        new_commit.as_deref(),
+        &params.file_path,
+        params.old_commit.as_deref(),
+        params.new_commit.as_deref(),
     );
     state.cache_manager.put_diff(cache_key, diff_lines.clone());
 
-    log::info!("Successfully computed and analyzed diff for {} ({} lines)", file_path, diff_lines.len());
+    log::info!("Successfully computed and analyzed diff for {} ({} lines)", params.file_path, diff_lines.len());
     Ok(diff_lines)
 }
 
 /// Adds a comment to a file
 #[tauri::command]
 pub async fn add_comment(
-    file_path: String,
-    line_number: u32,
-    content: String,
+    params: CommentParams,
     state: State<'_, AppState>,
 ) -> Result<Comment, String> {
-    log::info!("Adding comment to {} at line {}", file_path, line_number);
+    log::info!("Adding comment to {} at line {}", params.file_path, params.line_number);
 
     // Create comment ID using UUID
     let comment_id = uuid::Uuid::new_v4().to_string();
@@ -131,9 +146,9 @@ pub async fn add_comment(
     // Create comment object
     let comment = Comment {
         id: comment_id,
-        file_path: file_path.clone(),
-        line_number,
-        content: content.clone(),
+        file_path: params.file_path.clone(),
+        line_number: params.line_number,
+        content: params.content.clone(),
         author: "current_user".to_string(), // TODO: Get from auth
         created_at: timestamp.clone(),
         updated_at: timestamp,
@@ -147,8 +162,70 @@ pub async fn add_comment(
     database.store_comment(&comment)
         .map_err(|e| e.to_string())?;
 
-    log::info!("Successfully added comment {} to {} at line {}", comment.id, file_path, line_number);
+    log::info!("Successfully added comment {} to {} at line {}", comment.id, params.file_path, params.line_number);
     Ok(comment)
+}
+
+/// Updates an existing comment
+#[tauri::command]
+pub async fn update_comment(
+    params: UpdateCommentParams,
+    state: State<'_, AppState>,
+) -> Result<Comment, String> {
+    log::info!("Updating comment {}", params.comment_id);
+
+    if params.content.trim().is_empty() {
+        return Err("Comment content cannot be empty".to_string());
+    }
+
+    let database = state.database.lock().unwrap();
+
+    // Get existing comment
+    let existing_comment = database.get_comment(&params.comment_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| "Comment not found".to_string())?;
+
+    // Update comment
+    let updated_comment = Comment {
+        content: params.content.trim().to_string(),
+        updated_at: chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        ..existing_comment
+    };
+
+    database.update_comment(&updated_comment)
+        .map_err(|e| e.to_string())?;
+
+    log::info!("Successfully updated comment {}", params.comment_id);
+    Ok(updated_comment)
+}
+
+/// Deletes a comment
+#[tauri::command]
+pub async fn delete_comment(
+    comment_id: String,
+    state: State<'_, AppState>,
+) -> Result<bool, String> {
+    log::info!("Deleting comment {}", comment_id);
+
+    let database = state.database.lock().unwrap();
+    database.delete_comment(&comment_id)
+        .map_err(|e| e.to_string())?;
+
+    log::info!("Successfully deleted comment {}", comment_id);
+    Ok(true)
+}
+
+/// Gets comments for a specific file
+#[tauri::command]
+pub async fn get_comments(
+    file_path: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<Comment>, String> {
+    log::info!("Getting comments for file: {}", file_path);
+
+    let database = state.database.lock().unwrap();
+    database.get_comments_for_file(&file_path)
+        .map_err(|e| e.to_string())
 }
 
 /// Gets tasks for current review
@@ -256,9 +333,13 @@ pub async fn get_heatmap(state: State<'_, AppState>) -> Result<Vec<HeatmapItem>,
     let repo_path = git_service.get_current_path()
         .ok_or_else(|| "No repository loaded".to_string())?;
 
+    log::info!("Generating heatmap for repo: {}", repo_path);
     let heatmap_generator = analysis::heatmap::HeatmapGenerator::new();
-    heatmap_generator.generate_from_git(&repo_path)
-        .map_err(|e| e.to_string())
+    let result = heatmap_generator.generate_from_git(&repo_path)
+        .map_err(|e| e.to_string())?;
+
+    log::info!("Heatmap generated with {} items", result.len());
+    Ok(result)
 }
 
 /// Gets smart checklist
@@ -284,6 +365,41 @@ pub async fn get_blame(
     let git_service = state.git_service.lock().unwrap();
     git_service.get_blame(&file_path, commit.as_deref())
         .map_err(|e| e.to_string())
+}
+
+/// Reads file content
+#[tauri::command]
+pub async fn read_file_content(
+    params: FilePathParams,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    log::info!("Reading file content: {}", params.file_path);
+
+    // Get repository path
+    let git_service = state.git_service.lock().unwrap();
+    let repo_path = git_service.get_current_path()
+        .ok_or_else(|| "No repository loaded".to_string())?;
+
+    log::info!("Repository path: {:?}", repo_path);
+
+    // Construct full file path
+    let full_path = std::path::Path::new(&repo_path).join(&params.file_path);
+
+    log::info!("Full file path: {:?}", full_path);
+    log::info!("File exists: {}", full_path.exists());
+    log::info!("Is file: {}", full_path.is_file());
+
+    // Read file content
+    match std::fs::read_to_string(&full_path) {
+        Ok(content) => {
+            log::info!("Successfully read file, content length: {} bytes", content.len());
+            Ok(content)
+        },
+        Err(e) => {
+            log::error!("Failed to read file {}: {}", params.file_path, e);
+            Err(format!("Failed to read file {}: {}", params.file_path, e))
+        },
+    }
 }
 
 /// Analyzes code complexity

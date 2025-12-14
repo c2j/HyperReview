@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { FolderOpen, Upload, GitBranch, ChevronDown, Tag, PanelLeft, PanelRight, ArrowLeft, Loader2 } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getTags } from '../api/client';
+import { useApiClient } from '../api/client';
 import type { Tag as TagType } from '../api/types';
 
 interface ToolBarProps {
@@ -26,6 +26,7 @@ const ToolBar: React.FC<ToolBarProps> = ({
   diffContext
 }) => {
   const { t } = useTranslation();
+  const { getTags } = useApiClient();
   const [tags, setTags] = useState<TagType[]>([]);
   const [loadingTags, setLoadingTags] = useState(false);
 

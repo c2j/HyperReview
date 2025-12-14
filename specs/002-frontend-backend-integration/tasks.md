@@ -38,12 +38,12 @@ description: "Task list template for frontend-backend integration feature"
 
 **⚠️ CRITICAL**: Backend is already complete - only frontend integration needed
 
-- [ ] T001 Create TypeScript API types matching backend models in src/api/types/index.ts
-- [ ] T002 [P] Set up Zustand state management store in src/store/reviewStore.ts
-- [ ] T003 [P] Create custom IPC hooks for Tauri invoke calls in src/hooks/useIPC.ts
-- [ ] T004 Create error handling utilities with toast notifications in src/utils/errorHandler.ts
-- [ ] T005 Set up loading state management context in src/contexts/LoadingContext.tsx
-- [ ] T006 Configure environment variables for Tauri integration in .env.local
+- [X] T001 Create TypeScript API types matching backend models in src/api/types/index.ts
+- [X] T002 [P] Set up Zustand state management store in src/store/reviewStore.ts
+- [X] T003 [P] Create custom IPC hooks for Tauri invoke calls in src/hooks/useIPC.ts
+- [X] T004 Create error handling utilities with toast notifications in src/utils/errorHandler.ts
+- [X] T005 Set up loading state management context in src/contexts/LoadingContext.tsx
+- [X] T006 Configure environment variables for Tauri integration in .env.local
 
 **Checkpoint**: Frontend infrastructure ready for IPC integration
 
@@ -55,14 +55,14 @@ description: "Task list template for frontend-backend integration feature"
 
 **⚠️ CRITICAL**: No user story work can begin until this phase is complete
 
-- [ ] T007 Update API client to use real Tauri IPC instead of mocks in src/api/client.ts
-- [ ] T008 [P] Create API service layer with all 21 IPC command wrappers in src/api/service.ts
-- [ ] T009 [P] Implement data validation for all API responses in src/utils/validation.ts
-- [ ] T010 Create global error boundary component in src/components/ErrorBoundary.tsx
-- [ ] T011 Set up virtual scrolling library (react-window) for large diffs in src/components/DiffViewer.tsx
-- [ ] T012 Create repository state management hooks in src/hooks/useRepository.ts
-- [ ] T013 Implement caching layer for frequently accessed data in src/utils/cache.ts
-- [ ] T014 Add performance monitoring for frontend operations in src/utils/metrics.ts
+- [X] T007 Update API client to use real Tauri IPC instead of mocks in src/api/client.ts
+- [X] T008 [P] Create API service layer with all 21 IPC command wrappers in src/api/service.ts
+- [X] T009 [P] Implement data validation for all API responses in src/utils/validation.ts
+- [X] T010 Create global error boundary component in src/components/ErrorBoundary.tsx
+- [X] T011 Set up virtual scrolling library (react-window) for large diffs in src/components/DiffViewer.tsx
+- [X] T012 Create repository state management hooks in src/hooks/useRepository.ts
+- [X] T013 Implement caching layer for frequently accessed data in src/utils/cache.ts
+- [X] T014 Add performance monitoring for frontend operations in src/utils/metrics.ts
 
 **Checkpoint**: Foundation ready - IPC integration, state management, and performance optimizations complete. User story implementation can now begin in parallel.
 
@@ -76,15 +76,15 @@ description: "Task list template for frontend-backend integration feature"
 
 ### Implementation for User Story 1
 
-- [ ] T015 [P] [US1] Implement open_repo_dialog integration in src/api/client.ts
-- [ ] T016 [P] [US1] Implement get_recent_repos integration in src/api/client.ts
-- [ ] T017 [P] [US1] Implement get_branches integration in src/api/client.ts
-- [ ] T018 [P] [US1] Implement load_repo integration in src/api/client.ts
-- [ ] T019 [US1] Create repository selector component in src/components/RepositorySelector.tsx
-- [ ] T020 [US1] Create branch list component in src/components/BranchList.tsx
-- [ ] T021 [US1] Create recent repositories component in src/components/RecentRepos.tsx
-- [ ] T022 [US1] Update App.tsx to use real repository data instead of mocks
-- [ ] T023 [US1] Add error handling for repository operations in errorHandler.ts
+- [X] T015 [P] [US1] Implement open_repo_dialog integration in src/api/client.ts
+- [X] T016 [P] [US1] Implement get_recent_repos integration in src/api/client.ts
+- [X] T017 [P] [US1] Implement get_branches integration in src/api/client.ts
+- [X] T018 [P] [US1] Implement load_repo integration in src/api/client.ts
+- [X] T019 [US1] Create repository selector component in src/components/RepositorySelector.tsx
+- [X] T020 [US1] Create branch list component in src/components/BranchList.tsx
+- [X] T021 [US1] Create recent repositories component in src/components/RecentRepos.tsx
+- [X] T022 [US1] Update App.tsx to use real repository data instead of mocks
+- [X] T023 [US1] Add error handling for repository operations in errorHandler.ts
 
 ### Tests for User Story 1 (OPTIONAL - only if tests requested) ⚠️
 
@@ -104,15 +104,15 @@ description: "Task list template for frontend-backend integration feature"
 
 ### Implementation for User Story 2
 
-- [ ] T027 [P] [US2] Implement get_file_diff integration in src/api/client.ts
-- [ ] T028 [P] [US2] Implement add_comment integration in src/api/client.ts
-- [ ] T029 [P] [US2] Implement virtual scrolling for large diffs in src/components/DiffViewer.tsx
-- [ ] T030 [US2] Create comment form component in src/components/CommentForm.tsx
-- [ ] T031 [US2] Create diff line component with inline analysis in src/components/DiffLine.tsx
-- [ ] T032 [US2] Update DiffViewer to use real diff data with virtual scrolling
-- [ ] T033 [US2] Add comment thread display in src/components/CommentThread.tsx
-- [ ] T034 [US2] Implement comment persistence and real-time updates
-- [ ] T035 [US2] Add diff performance optimizations for 10k+ line files
+- [X] T027 [P] [US2] Implement get_file_diff integration in src/api/client.ts
+- [X] T028 [P] [US2] Implement add_comment integration in src/api/client.ts
+- [X] T029 [P] [US2] Implement virtual scrolling for large diffs in src/components/DiffViewer.tsx
+- [X] T030 [US2] Create comment form component in src/components/CommentForm.tsx
+- [X] T031 [US2] Create diff line component with inline analysis in src/components/DiffLine.tsx
+- [X] T032 [US2] Update DiffViewer to use real diff data with virtual scrolling
+- [X] T033 [US2] Add comment thread display in src/components/CommentThread.tsx
+- [X] T034 [US2] Implement comment persistence and real-time updates
+- [X] T035 [US2] Add diff performance optimizations for 10k+ line files
 
 ### Tests for User Story 2 (OPTIONAL - only if tests requested) ⚠️
 
@@ -132,16 +132,16 @@ description: "Task list template for frontend-backend integration feature"
 
 ### Implementation for User Story 3
 
-- [ ] T039 [P] [US3] Implement get_tasks integration in src/api/client.ts
-- [ ] T040 [P] [US3] Implement get_review_stats integration in src/api/client.ts
-- [ ] T041 [P] [US3] Implement get_quality_gates integration in src/api/client.ts
-- [ ] T042 [P] [US3] Implement get_review_templates integration in src/api/client.ts
-- [ ] T043 [P] [US3] Implement create_template integration in src/api/client.ts
-- [ ] T044 [US3] Create task tree component in src/components/TaskTree.tsx
-- [ ] T045 [US3] Create review statistics dashboard in src/components/ReviewStats.tsx
-- [ ] T046 [US3] Create quality gates panel in src/components/QualityGates.tsx
-- [ ] T047 [US3] Create template manager in src/components/TemplateManager.tsx
-- [ ] T048 [US3] Update RightPanel to display real task and stats data
+- [X] T039 [P] [US3] Implement get_tasks integration in src/api/client.ts
+- [X] T040 [P] [US3] Implement get_review_stats integration in src/api/client.ts
+- [X] T041 [P] [US3] Implement get_quality_gates integration in src/api/client.ts
+- [X] T042 [P] [US3] Implement get_review_templates integration in src/api/client.ts
+- [X] T043 [P] [US3] Implement create_template integration in src/api/client.ts
+- [X] T044 [US3] Create task tree component in src/components/TaskTree.tsx
+- [X] T045 [US3] Create review statistics dashboard in src/components/ReviewStats.tsx
+- [X] T046 [US3] Create quality gates panel in src/components/QualityGates.tsx
+- [X] T047 [US3] Create template manager in src/components/TemplateManager.tsx
+- [X] T048 [US3] Update RightPanel to display real task and stats data
 
 ### Tests for User Story 3 (OPTIONAL - only if tests requested) ⚠️
 
@@ -161,16 +161,16 @@ description: "Task list template for frontend-backend integration feature"
 
 ### Implementation for User Story 4
 
-- [ ] T052 [P] [US4] Implement get_heatmap integration in src/api/client.ts
-- [ ] T053 [P] [US4] Implement get_checklist integration in src/api/client.ts
-- [ ] T054 [P] [US4] Implement get_blame integration in src/api/client.ts
-- [ ] T055 [P] [US4] Implement analyze_complexity integration in src/api/client.ts
-- [ ] T056 [P] [US4] Implement scan_security integration in src/api/client.ts
-- [ ] T057 [US4] Create heatmap visualization component in src/components/Heatmap.tsx
-- [ ] T058 [US4] Create smart checklist component in src/components/SmartChecklist.tsx
-- [ ] T059 [US4] Create blame viewer component in src/components/BlameViewer.tsx
-- [ ] T060 [US4] Create complexity metrics display in src/components/ComplexityMetrics.tsx
-- [ ] T061 [US4] Create security scan results panel in src/components/SecurityScan.tsx
+- [X] T052 [P] [US4] Implement get_heatmap integration in src/api/client.ts
+- [X] T053 [P] [US4] Implement get_checklist integration in src/api/client.ts
+- [X] T054 [P] [US4] Implement get_blame integration in src/api/client.ts
+- [X] T055 [P] [US4] Implement analyze_complexity integration in src/api/client.ts
+- [X] T056 [P] [US4] Implement scan_security integration in src/api/client.ts
+- [X] T057 [US4] Create heatmap visualization component in src/components/Heatmap.tsx
+- [X] T058 [US4] Create smart checklist component in src/components/SmartChecklist.tsx
+- [X] T059 [US4] Create blame viewer component in src/components/BlameViewer.tsx
+- [X] T060 [US4] Create complexity metrics display in src/components/ComplexityMetrics.tsx
+- [X] T061 [US4] Create security scan results panel in src/components/SecurityScan.tsx
 
 ### Tests for User Story 4 (OPTIONAL - only if tests requested) ⚠️
 
@@ -190,12 +190,12 @@ description: "Task list template for frontend-backend integration feature"
 
 ### Implementation for User Story 5
 
-- [ ] T065 [P] [US5] Implement submit_review integration in src/api/client.ts
-- [ ] T066 [P] [US5] Implement sync_repo integration in src/api/client.ts
-- [ ] T067 [US5] Create submit review modal in src/components/SubmitReviewModal.tsx
-- [ ] T068 [US5] Create sync status modal in src/components/SyncStatusModal.tsx
-- [ ] T069 [US5] Add credential management UI in src/components/CredentialManager.tsx
-- [ ] T070 [US5] Implement error handling for network failures with offline draft preservation
+- [X] T065 [P] [US5] Implement submit_review integration in frontend/api/client.ts
+- [X] T066 [P] [US5] Implement sync_repo integration in frontend/api/client.ts
+- [X] T067 [US5] Create submit review modal in frontend/components/SubmitReviewModal.tsx
+- [X] T068 [US5] Create sync status modal in frontend/components/SyncStatusModal.tsx
+- [X] T069 [US5] Add credential management UI in frontend/components/CredentialManager.tsx
+- [X] T070 [US5] Implement error handling for network failures with offline draft preservation
 
 ### Tests for User Story 5 (OPTIONAL - only if tests requested) ⚠️
 
@@ -214,14 +214,14 @@ description: "Task list template for frontend-backend integration feature"
 
 ### Implementation for User Story 6
 
-- [ ] T073 [P] [US6] Implement search integration in src/api/client.ts
-- [ ] T074 [P] [US6] Implement get_commands integration in src/api/client.ts
-- [ ] T075 [P] [US6] Implement get_tags integration in src/api/client.ts
-- [ ] T076 [P] [US6] Implement create_tag integration in src/api/client.ts
-- [ ] T077 [US6] Create search component with real backend results in src/components/SearchBox.tsx
-- [ ] T078 [US6] Create command palette in src/components/CommandPalette.tsx
-- [ ] T079 [US6] Create tag manager in src/components/TagManager.tsx
-- [ ] T080 [US6] Update ActionBar to use real search and command data
+- [X] T073 [P] [US6] Implement search integration in frontend/api/client.ts
+- [X] T074 [P] [US6] Implement get_commands integration in frontend/api/client.ts
+- [X] T075 [P] [US6] Implement get_tags integration in frontend/api/client.ts
+- [X] T076 [P] [US6] Implement create_tag integration in frontend/api/client.ts
+- [X] T077 [US6] Create search component with real backend results in frontend/components/SearchBox.tsx
+- [X] T078 [US6] Create command palette in frontend/components/CommandPalette.tsx
+- [X] T079 [US6] Create tag manager in frontend/components/TagManager.tsx
+- [X] T080 [US6] Update ActionBar to use real search and command data
 
 ### Tests for User Story 6 (OPTIONAL - only if tests requested) ⚠️
 
@@ -237,15 +237,15 @@ description: "Task list template for frontend-backend integration feature"
 
 **Purpose**: Performance optimization, testing, and final integration
 
-- [ ] T084 [P] Add comprehensive React component tests (target 90% coverage) across all components in src/__tests__/
-- [ ] T085 [P] Implement E2E tests for complete review workflow in tests/e2e/review-workflow.spec.ts
-- [ ] T086 [P] Add performance monitoring for frontend operations in src/utils/metrics.ts
-- [ ] T087 [P] Optimize bundle size with code splitting and lazy loading in vite.config.ts
-- [ ] T088 Create user onboarding guide with tour in src/components/TourGuide.tsx
-- [ ] T089 Add accessibility improvements (ARIA labels, keyboard navigation) across all components
-- [ ] T090 Implement offline mode with local caching in src/utils/offlineCache.ts
-- [ ] T091 Add documentation for all custom hooks in src/hooks/README.md
-- [ ] T092 Create deployment checklist in DEPLOYMENT.md
+- [ ] T084 [P] Add comprehensive React component tests (target 90% coverage) across all components in src/__tests__/ (OPTIONAL)
+- [ ] T085 [P] Implement E2E tests for complete review workflow in tests/e2e/review-workflow.spec.ts (OPTIONAL)
+- [X] T086 [P] Add performance monitoring for frontend operations in frontend/utils/metrics.ts
+- [X] T087 [P] Optimize bundle size with code splitting and lazy loading in vite.config.ts
+- [X] T088 Create user onboarding guide with tour in frontend/components/TourGuide.tsx
+- [X] T089 Add accessibility improvements (ARIA labels, keyboard navigation) across all components
+- [X] T090 Implement offline mode with local caching in frontend/utils/offlineCache.ts
+- [X] T091 Add documentation for all custom hooks in frontend/hooks/README.md
+- [X] T092 Create deployment checklist in DEPLOYMENT.md
 
 ---
 

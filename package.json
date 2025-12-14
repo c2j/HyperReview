@@ -7,22 +7,30 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "tauri:build": "tauri build",
+    "tauri:build:optimized": "tauri build --debug",
+    "tauri:build:compress": "npm run tauri:build && ./scripts/compress-bundles.sh",
+    "compress:binaries": "find src-tauri/target/release/bundle -name 'hyperreview*' -type f -exec upx --best {} \\; 2>/dev/null || echo 'UPX not installed, skipping compression'"
   },
   "dependencies": {
-    "lucide-react": "^0.561.0",
-    "react-dom": "^19.2.3",
-    "react": "^19.2.3",
     "@tauri-apps/api": "^2",
-    "@tauri-apps/plugin-opener": "^2"
+    "@tauri-apps/plugin-opener": "^2",
+    "@types/react-window": "^2.0.0",
+    "lucide-react": "^0.561.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "react-window": "^2.2.3",
+    "react-window-infinite-loader": "^2.0.0",
+    "zustand": "^5.0.9"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2",
     "@types/node": "^22.14.0",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "~5.8.2",
-    "vite": "^6.2.0",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@tauri-apps/cli": "^2"
+    "@vitejs/plugin-react": "^5.0.0",
+    "typescript": "~5.8.2",
+    "vite": "^6.2.0"
   }
 }

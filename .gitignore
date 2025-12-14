@@ -31,3 +31,19 @@ release/
 *.prof*
 .env*
 Cargo.lock
+
+# Rust build artifacts
+target/
+build/
+
+# Coverage reports
+coverage/
+*.lcov
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# OS files
+Thumbs.db

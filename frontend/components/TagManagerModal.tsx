@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Tag, X, Plus, Circle, Loader2 } from 'lucide-react';
+import { X, Plus, Loader2 } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getTags } from '../api/client';
+import { useApiClient } from '../api/client';
 import type { Tag as TagType } from '../api/types';
 
 interface TagManagerModalProps {
@@ -18,6 +18,7 @@ const COLORS = [
 
 const TagManagerModal: React.FC<TagManagerModalProps> = ({ onClose }) => {
   const { t } = useTranslation();
+  const { getTags } = useApiClient();
   const [tags, setTags] = useState<TagType[]>([]);
   const [loading, setLoading] = useState(true);
   const [newTag, setNewTag] = useState('');
@@ -31,13 +32,13 @@ const TagManagerModal: React.FC<TagManagerModalProps> = ({ onClose }) => {
         .finally(() => setLoading(false));
   }, []);
 
-  const removeTag = (id: number) => {
+  const removeTag = (id: string) => {
     setTags(tags.filter(t => t.id !== id));
   };
 
   const addTag = () => {
     if(!newTag) return;
-    setTags([...tags, { id: Date.now(), label: newTag, color: selectedColor }]);
+    setTags([...tags, { id: crypto.randomUUID(), label: newTag, color: selectedColor, usage_count: 0, created_at: new Date().toISOString(), updated_at: new Date().toISOString() }]);
     setNewTag('');
   };
 
