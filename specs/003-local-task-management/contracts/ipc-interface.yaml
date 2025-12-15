@@ -1,0 +1,883 @@
+# IPC Interface Specification: Local Task Management
+# Generated: 2025-12-15 | Feature: 003-local-task-management
+
+openapi: 3.0.3
+info:
+  title: HyperReview Local Task Management IPC Interface
+  version: 1.0.0
+  description: |
+    Internal Tauri IPC interface for Local Task Management feature.
+    All commands are invoked from React frontend to Rust backend via Tauri's invoke API.
+
+# Note: This is not a REST API - it's a specification for Tauri IPC commands
+# Each command maps to a Rust function with #[tauri::command] attribute
+
+paths:
+  # ============================================================================
+  # TASK MANAGEMENT COMMANDS
+  # ============================================================================
+
+  /task/create:
+    post:
+      summary: Create a new local task
+      description: |
+        Creates a new local task by parsing text import and saving to JSON file.
+        Validates repository path and base reference before creating task.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateTaskRequest'
+      responses:
+        '200':
+          description: Task created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '400':
+          description: Invalid input (missing fields, invalid format, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error (file I/O, git operations, etc.)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /task/list:
+    get:
+      summary: List all local tasks
+      description: |
+        Returns a summary list of all local tasks with basic metadata.
+        Used for populating the left sidebar task list.
+      parameters:
+        - name: status
+          in: query
+          description: Filter tasks by status
+          required: false
+          schema:
+            type: string
+            enum: [in_progress, completed, archived, all]
+            default: all
+      responses:
+        '200':
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TaskSummary'
+
+  /task/{taskId}:
+    get:
+      summary: Get a specific task by ID
+      description: |
+        Returns the complete task with all items and comments.
+        Used when user clicks on a task to start reviewing.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Task'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /task/{taskId}/progress:
+    post:
+      summary: Update task item review status
+      description: |
+        Marks a task item as reviewed or unreviewed.
+        Updates completed_items count and persists progress.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProgressRequest'
+      responses:
+        '200':
+          description: Progress updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProgressUpdateResult'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /task/{taskId}:
+    delete:
+      summary: Delete a local task
+      description: |
+        Permanently deletes a task and its JSON file.
+        Only task creator can delete their own tasks.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task deleted successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeleteResult'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: Permission denied (not task creator)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /task/{taskId}/archive:
+    post:
+      summary: Archive a completed task
+      description: |
+        Changes task status to archived.
+        Used for cleaning up completed tasks from active list.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Task archived successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArchiveResult'
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /task/{taskId}/export:
+    get:
+      summary: Export task as JSON
+      description: |
+        Generates a JSON export of the task for sharing or integration.
+        Contains all task items, comments, and metadata.
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          description: Task UUID
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Exported task JSON
+          content:
+            application/json:
+              schema:
+                type: string
+                description: JSON string for download
+        '404':
+          description: Task not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ============================================================================
+  # TEXT PARSING COMMANDS
+  # ============================================================================
+
+  /task/parse:
+    post:
+      summary: Parse task import text
+      description: |
+        Parses tab/space-separated text into task items.
+        Validates format and returns parsed items with error reporting.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ParseTextRequest'
+      responses:
+        '200':
+          description: Parsed items with validation results
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParseResult'
+
+  # ============================================================================
+  # GIT OPERATIONS COMMANDS
+  # ============================================================================
+
+  /git/validate-repo:
+    post:
+      summary: Validate repository path
+      description: |
+        Checks if a path is a valid git repository.
+        Verifies directory exists and is a git repo.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRepoRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateRepoResult'
+
+  /git/list-branches:
+    post:
+      summary: List repository branches
+      description: |
+        Returns a list of all branches in a repository.
+        Includes both local and remote branches.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ListBranchesRequest'
+      responses:
+        '200':
+          description: List of branch names
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ListBranchesResult'
+
+  /git/validate-ref:
+    post:
+      summary: Validate git reference
+      description: |
+        Checks if a branch/commit/tag exists in repository.
+        Used for validating base_ref before task creation.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ValidateRefRequest'
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidateRefResult'
+
+  /git/read-file:
+    post:
+      summary: Read file from specific ref
+      description: |
+        Reads file content from a specific branch/commit/tag.
+        Used for loading files during review workflow.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReadFileRequest'
+      responses:
+        '200':
+          description: File content
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadFileResult'
+        '404':
+          description: File or ref not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  # ============================================================================
+  # FILE OPERATIONS COMMANDS
+  # ============================================================================
+
+  /file/ensure-dir:
+    post:
+      summary: Ensure directory exists
+      description: |
+        Creates directory and parent directories if they don't exist.
+        Used for initializing ~/.hyperreview/local_tasks/
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EnsureDirRequest'
+      responses:
+        '200':
+          description: Directory ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EnsureDirResult'
+
+# ============================================================================
+# COMPONENT SCHEMAS
+# ============================================================================
+
+components:
+  schemas:
+    # Request/Response Schemas
+    CreateTaskRequest:
+      type: object
+      required:
+        - name
+        - repo_path
+        - base_ref
+        - items_text
+      properties:
+        name:
+          type: string
+          description: User-defined task name
+          maxLength: 255
+        type: string
+ repo_path:
+                   description: Absolute path to git repository
+          example: /Users/alice/projects/payment-service
+        base_ref:
+          type: string
+          description: Branch/commit/tag name
+          example: main
+        items_text:
+          type: string
+          description: Tab/space-separated task items
+          example: |
+            src/main/java/com/pay/Retry.java    124-189    N+1风险    ✗    N+1,硬编码
+            src/main/resources/mapper/Payment.xml        MyBatis不一致    ⚠
+
+    Task:
+      type: object
+      required:
+        - id
+        - name
+        - repo_path
+        - base_ref
+        - create_time
+        - update_time
+        - status
+        - total_items
+        - completed_items
+        - items
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Task UUID
+        name:
+          type: string
+          description: Task name
+        repo_path:
+          type: string
+          description: Repository path
+        base_ref:
+          type: string
+          description: Base reference
+        create_time:
+          type: string
+          format: date-time
+          description: Creation timestamp
+        update_time:
+          type: string
+          format: date-time
+          description: Last update timestamp
+        status:
+          type: string
+          enum: [in_progress, completed, archived]
+          description: Task status
+        total_items:
+          type: integer
+          minimum: 1
+          maximum: 10000
+          description: Total number of items
+        completed_items:
+          type: integer
+          minimum: 0
+          maximum: 10000
+          description: Number of completed items
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskItem'
+
+    TaskSummary:
+      type: object
+      required:
+        - id
+        - name
+        - status
+        - total_items
+        - completed_items
+        - repo_path
+        - base_ref
+        - create_time
+        - update_time
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        status:
+          type: string
+          enum: [in_progress, completed, archived]
+        total_items:
+          type: integer
+        completed_items:
+          type: integer
+        repo_path:
+          type: string
+        base_ref:
+          type: string
+        create_time:
+          type: string
+          format: date-time
+        update_time:
+          type: string
+          format: date-time
+
+    TaskItem:
+      type: object
+      required:
+        - file
+        - reviewed
+      properties:
+        file:
+          type: string
+          description: Relative file path from repository root
+        line_range:
+          type: object
+          properties:
+            start:
+              type: integer
+              minimum: 1
+              description: Starting line number (1-indexed)
+            end:
+              type: integer
+              minimum: 1
+              description: Ending line number (1-indexed)
+        preset_comment:
+          type: string
+          nullable: true
+          description: Pre-filled comment
+        severity:
+          type: string
+          nullable: true
+          enum: [error, warning, question, ok]
+          description: Severity level
+        tags:
+          type: array
+          items:
+            type: string
+          description: Custom tags
+        reviewed:
+          type: boolean
+          description: Whether this item has been reviewed
+        comments:
+          type: array
+          items:
+            $ref: '#/components/schemas/Comment'
+          description: Review comments
+
+    Comment:
+      type: object
+      required:
+        - id
+        - author
+        - content
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        author:
+          type: string
+        content:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        line_number:
+          type: integer
+          nullable: true
+          minimum: 1
+
+    UpdateProgressRequest:
+      type: object
+      required:
+        - item_index
+        - reviewed
+      properties:
+        item_index:
+          type: integer
+          minimum: 0
+          description: Index in items array
+        reviewed:
+          type: boolean
+          description: New review status
+
+    ProgressUpdateResult:
+      type: object
+      required:
+        - success
+        - completed_items
+      properties:
+        success:
+          type: boolean
+        completed_items:
+          type: integer
+        total_items:
+          type: integer
+
+    ParseTextRequest:
+      type: object
+      required:
+        - text
+      properties:
+        text:
+          type: string
+          description: Raw text to parse
+
+    ParseResult:
+      type: object
+      required:
+        - items
+        - success_count
+        - error_count
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/TaskItem'
+        success_count:
+          type: integer
+          description: Number of successfully parsed items
+        error_count:
+          type: integer
+          description: Number of parsing errors
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              line_number:
+                type: integer
+              message:
+                type: string
+          description: Parsing errors with line numbers
+
+    # Git Operation Schemas
+    ValidateRepoRequest:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: string
+          description: Repository path to validate
+
+    ValidateRepoResult:
+      type: object
+      required:
+        - valid
+        - is_repo
+      properties:
+        valid:
+          type: boolean
+          description: Path is valid git repository
+        is_repo:
+          type: boolean
+          description: Alias for valid (backward compatibility)
+        error:
+          type: string
+          nullable: true
+          description: Error message if invalid
+
+    ListBranchesRequest:
+      type: object
+      required:
+        - repo_path
+      properties:
+        repo_path:
+          type: string
+
+    ListBranchesResult:
+      type: object
+      required:
+        - branches
+      properties:
+        branches:
+          type: array
+          items:
+            type: string
+          description: List of branch names
+
+    ValidateRefRequest:
+      type: object
+      required:
+        - repo_path
+        - base_ref
+      properties:
+        repo_path:
+          type: string
+        base_ref:
+          type: string
+          description: Branch/commit/tag to validate
+
+    ValidateRefResult:
+      type: object
+      required:
+        - valid
+      properties:
+        valid:
+          type: boolean
+        ref_type:
+          type: string
+          enum: [branch, commit, tag, unknown]
+
+    ReadFileRequest:
+      type: object
+      required:
+        - repo_path
+        - base_ref
+        - file_path
+      properties:
+        repo_path:
+          type: string
+        base_ref:
+          type: string
+        file_path:
+          type: string
+          description: Relative file path
+
+    ReadFileResult:
+      type: object
+      required:
+        - content
+      properties:
+        content:
+          type: string
+          description: File contents
+
+    # File Operation Schemas
+    EnsureDirRequest:
+      type: object
+      required:
+        - path
+      properties:
+        path:
+          type: string
+          description: Directory path to ensure
+
+    EnsureDirResult:
+      type: object
+      required:
+        - created
+      properties:
+        created:
+          type: boolean
+          description: Whether directory was created
+
+    # Generic Schemas
+    Error:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+          description: Error message
+        code:
+          type: string
+          description: Error code
+        details:
+          type: object
+          description: Additional error details
+
+    DeleteResult:
+      type: object
+      required:
+        - success
+      properties:
+        success:
+          type: boolean
+
+    ArchiveResult:
+      type: object
+      required:
+        - success
+        - status
+      properties:
+        success:
+          type: boolean
+        status:
+          type: string
+          enum: [archived]
+
+# ============================================================================
+# COMMAND MAPPING TO RUST FUNCTIONS
+# ============================================================================
+
+# This section maps IPC commands to Rust function implementations
+# Each command corresponds to a function with #[tauri::command] attribute
+
+command_mapping:
+  # Task Management
+  create_task: create_task_handler
+  list_tasks: list_tasks_handler
+  get_task: get_task_handler
+  update_task_progress: update_task_progress_handler
+  delete_task: delete_task_handler
+  archive_task: archive_task_handler
+  export_task: export_task_handler
+
+  # Text Parsing
+  parse_task_text: parse_task_text_handler
+
+  # Git Operations
+  validate_repository: validate_repository_handler
+  list_branches: list_branches_handler
+  validate_ref: validate_ref_handler
+  read_file_from_ref: read_file_from_ref_handler
+
+  # File Operations
+  ensure_directory: ensure_directory_handler
+  write_task_file: write_task_file_handler
+  read_task_file: read_task_file_handler
+
+# ============================================================================
+# ERROR CODES
+# ============================================================================
+
+error_codes:
+  INVALID_INPUT: "Input validation failed"
+  TASK_NOT_FOUND: "Task with given ID not found"
+  REPOSITORY_NOT_FOUND: "Repository path not found or not a git repository"
+  REF_NOT_FOUND: "Git reference (branch/commit/tag) not found"
+  FILE_NOT_FOUND: "File not found in repository"
+  PERMISSION_DENIED: "Permission denied"
+  FILE_LOCKED: "File is being edited by another instance"
+  PARSE_ERROR: "Text parsing failed"
+  IO_ERROR: "File I/O error"
+  GIT_ERROR: "Git operation error"
+  INTERNAL_ERROR: "Internal error"
+
+# ============================================================================
+# PERFORMANCE REQUIREMENTS
+# ============================================================================
+
+performance_requirements:
+  parse_task_text:
+    max_latency_ms: 500
+    max_input_lines: 2000
+  get_task:
+    max_latency_ms: 300
+  update_task_progress:
+    max_latency_ms: 100
+  read_file_from_ref:
+    max_latency_ms: 300
+  validate_repository:
+    max_latency_ms: 100
+  list_branches:
+    max_latency_ms: 200
+
+# ============================================================================
+# USAGE EXAMPLES
+# ============================================================================
+
+usage_examples:
+  create_task:
+    frontend: |
+      const task = await invoke('create_task', {
+        payload: {
+          name: '支付系统雷区清理',
+          repo_path: '/Users/alice/projects/payment-service',
+          base_ref: 'main',
+          items_text: 'src/main/java/Retry.java\t124-189\tN+1风险\t✗\tN+1'
+        }
+      });
+    rust: |
+      #[tauri::command]
+      pub async fn create_task(payload: CreateTaskRequest) -> Result<Task, String> {
+          // Implementation
+      }
+
+  update_progress:
+    frontend: |
+      await invoke('update_task_progress', {
+        taskId: 'uuid-here',
+        payload: { item_index: 5, reviewed: true }
+      });
+    rust: |
+      #[tauri::command]
+      pub async fn update_task_progress(
+          task_id: String,
+          payload: UpdateProgressRequest
+      ) -> Result<ProgressUpdateResult, String> {
+          // Implementation
+      }
+
+  parse_text:
+    frontend: |
+      const result = await invoke('parse_task_text', {
+        text: 'file/path.java\t10-20\tComment\thigh\ttag1,tag2'
+      });
+      console.log(`Parsed ${result.items.length} items`);
+    rust: |
+      #[tauri::command]
+      pub async fn parse_task_text(text: String) -> Result<ParseResult, String> {
+          // Implementation
+      }
