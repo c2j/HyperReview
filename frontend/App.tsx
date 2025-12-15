@@ -19,17 +19,54 @@ import SyncStatusModal from './components/SyncStatusModal';
 import BranchCompareModal from './components/BranchCompareModal';
 import TourGuide from './components/TourGuide';
 
+// New repository components
+import RepositorySelector from './components/RepositorySelector';
+
+// Error handling and loading
+import ToastContainer from './components/ToastContainer';
+import ErrorBoundary from './components/ErrorBoundary';
+import { LoadingProvider } from './context/LoadingContext';
+
+// Repository hooks
+import { useRepositoryActions } from './hooks/useRepository';
+import { useRepositoryStatus } from './hooks/useRepository';
+
+// Toast notifications
+import { showSuccess } from './utils/errorHandler';
+
+// Types
+import type { Repository } from './api/types';
+
 const App: React.FC = () => {
   const [activeTaskId, setActiveTaskId] = useState('1');
-  const [notification, setNotification] = useState<string | null>(null);
-  
-  // Repository & Diff Context State
-  const [isRepoLoaded, setIsRepoLoaded] = useState(false);
-  const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
+
+  // Repository state using hooks
+  const {
+    currentBranch,
+    openRepository
+  } = useRepositoryActions();
+
+  const { isRepoLoaded } = useRepositoryStatus();
+
+  // Diff context state
   const [diffContext, setDiffContext] = useState({
-      base: 'master',
-      head: 'feature/payment-retry'
+    base: currentBranch?.name || 'main',
+    head: currentBranch?.name || 'main'
   });
+
+  // Selected file state
+  const [selectedFile, setSelectedFile] = useState<string | null>(null);
+
+  // Update diff context when current branch changes
+  useEffect(() => {
+    if (currentBranch) {
+      setDiffContext(prev => ({
+        ...prev,
+        base: prev.base || currentBranch.name,
+        head: currentBranch.name
+      }));
+    }
+  }, [currentBranch]);
 
   // Layout State
   const [leftWidth, setLeftWidth] = useState(260);
@@ -40,6 +77,7 @@ const App: React.FC = () => {
 
   // Modal States
   const [openRepoModalOpen, setOpenRepoModalOpen] = useState(false);
+  const [repositorySelectorOpen, setRepositorySelectorOpen] = useState(false);
   const [importTaskModalOpen, setImportTaskModalOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -50,16 +88,15 @@ const App: React.FC = () => {
   const [syncStatusModalOpen, setSyncStatusModalOpen] = useState(false);
   const [branchCompareModalOpen, setBranchCompareModalOpen] = useState(false);
   const [isInitialSetup, setIsInitialSetup] = useState(false);
-  
+
   // Tour State
   const [tourOpen, setTourOpen] = useState(false);
 
   // Initial Load Effect
   useEffect(() => {
-    // If no repo is loaded on startup, prompt user to open one
+    // If no repo is loaded on startup, show repository selector
     if (!isRepoLoaded) {
-      // Small timeout to ensure UI is ready
-      const timer = setTimeout(() => setOpenRepoModalOpen(true), 100);
+      const timer = setTimeout(() => setRepositorySelectorOpen(true), 100);
       return () => clearTimeout(timer);
     }
   }, [isRepoLoaded]);
@@ -123,45 +160,50 @@ const App: React.FC = () => {
     }
   }, [isMaximized]);
 
+  // Notification handler (legacy - using toast system now)
   const showNotification = useCallback((message: string) => {
-    setNotification(message);
-    const timer = setTimeout(() => setNotification(null), 2000);
-    return () => clearTimeout(timer);
+    // Use toast notification instead
+    console.log('Notification:', message);
   }, []);
 
-  // --- Handlers for Open Repo Wizard ---
-  
-  // Step 1: Select Repo -> Proceed to Step 2
-  const handleOpenRepo = (path: string) => {
-    setSelectedRepoPath(path);
-    setOpenRepoModalOpen(false);
-    
-    // Trigger Step 2 immediately
-    setIsInitialSetup(true);
-    setBranchCompareModalOpen(true);
-  };
+  // --- Repository Event Handlers ---
+
+  // Handle repository selection from RepositorySelector
+  const handleRepositorySelected = useCallback((repository: Repository) => {
+    const repoName = repository.path.split('/').pop() || repository.path;
+    showSuccess(`Repository loaded: ${repoName}`);
+    setRepositorySelectorOpen(false);
+    setIsInitialSetup(false);
+  }, []);
+
+  // Handle opening new repository
+  const handleOpenRepo = useCallback(async () => {
+    const repository = await openRepository();
+    if (repository) {
+      handleRepositorySelected(repository);
+    }
+  }, [openRepository, handleRepositorySelected]);
+
+  // --- Handlers for Open Repo Wizard (Legacy) ---
 
   // Back from Step 2 -> Step 1
   const handleBackToRepoSelection = () => {
-      setBranchCompareModalOpen(false);
-      // Small delay for smooth visual transition
-      setTimeout(() => setOpenRepoModalOpen(true), 50);
+    setBranchCompareModalOpen(false);
+    setTimeout(() => setRepositorySelectorOpen(true), 50);
   };
 
   // Step 2: Select Branches -> Load UI
   const handleApplyBranchCompare = (base: string, head: string) => {
-      setDiffContext({ base, head });
-      
-      // If this was part of the initial setup, finalize the load
-      if (isInitialSetup) {
-          setIsRepoLoaded(true);
-          setIsInitialSetup(false);
-          showNotification(`Repository Loaded: ${selectedRepoPath} (${base} ← ${head})`);
-      } else {
-          showNotification(`Comparing ${base} ← ${head}`);
-      }
-      
-      setBranchCompareModalOpen(false);
+    setDiffContext({ base, head });
+
+    if (isInitialSetup) {
+      setIsInitialSetup(false);
+      showSuccess(`Repository configured: ${base} ← ${head}`);
+    } else {
+      showSuccess(`Comparing ${base} ← ${head}`);
+    }
+
+    setBranchCompareModalOpen(false);
   };
 
   // --- Other Handlers ---
@@ -193,6 +235,16 @@ const App: React.FC = () => {
 
   // Generalized Action Handler
   const handleAction = (msg: string) => {
+    console.log('handleAction received:', msg);
+
+    // Handle file selection from heatmap
+    if (msg.startsWith("FILE_SELECTED:")) {
+      const filePath = msg.substring(14); // Remove "FILE_SELECTED:" prefix
+      console.log('Setting selected file:', filePath);
+      setSelectedFile(filePath);
+      return;
+    }
+
     if (msg === "Global Search Activated") { setSearchOpen(true); return; }
     if (msg === "Settings Opened") { setSettingsOpen(true); return; }
     if (msg === "Concern Marked") { setReviewModal({ isOpen: true, type: 'concern' }); return; }
@@ -204,17 +256,18 @@ const App: React.FC = () => {
     if (msg === "Opening Tag Manager...") { setTagManagerModalOpen(true); return; }
     if (msg === "Syncing with Remote...") { setSyncStatusModalOpen(true); return; }
     if (msg === "Start Tour") { setTourOpen(true); return; }
+    if (msg === "Opening Repository...") { setRepositorySelectorOpen(true); return; }
     if (msg === "Switching Branch...") { setIsInitialSetup(false); setBranchCompareModalOpen(true); return; }
-    
+
     showNotification(msg);
   };
 
   return (
     <div className="flex flex-col h-screen w-screen bg-editor-bg text-editor-fg font-mono overflow-hidden relative">
       <TitleBar onAction={handleAction} />
-      <ToolBar 
-        onAction={handleAction} 
-        onOpenRepo={() => setOpenRepoModalOpen(true)}
+      <ToolBar
+        onAction={handleAction}
+        onOpenRepo={() => setRepositorySelectorOpen(true)}
         onImportTask={() => setImportTaskModalOpen(true)}
         showLeft={showLeft}
         showRight={showRight}
@@ -251,11 +304,12 @@ const App: React.FC = () => {
 
         {/* Center Pane (Diff View) */}
         <div className="flex-1 min-w-0 h-full border-r border-editor-line relative pb-[56px] flex flex-col">
-          <DiffView 
-            isMaximized={isMaximized} 
-            toggleMaximize={toggleMaximize} 
+          <DiffView
+            isMaximized={isMaximized}
+            toggleMaximize={toggleMaximize}
             onAction={handleAction}
             diffContext={diffContext}
+            selectedFile={selectedFile}
           />
           <ActionBar onAction={handleAction} />
         </div>
@@ -286,6 +340,10 @@ const App: React.FC = () => {
       </div>
 
       {/* --- MODALS --- */}
+      <Modal isOpen={repositorySelectorOpen} onClose={() => setRepositorySelectorOpen(false)} title="Select Repository">
+        <RepositorySelector onRepositorySelected={handleRepositorySelected} />
+      </Modal>
+
       <Modal isOpen={openRepoModalOpen} onClose={() => { if(isRepoLoaded) setOpenRepoModalOpen(false); }} title="Open Repository">
         <OpenRepoModal onClose={() => { if(isRepoLoaded) setOpenRepoModalOpen(false); }} onOpen={handleOpenRepo} />
       </Modal>
@@ -321,29 +379,36 @@ const App: React.FC = () => {
       <Modal isOpen={syncStatusModalOpen} onClose={() => setSyncStatusModalOpen(false)} title="Remote Sync Status">
         <SyncStatusModal onClose={() => setSyncStatusModalOpen(false)} />
       </Modal>
-      
+
       <Modal isOpen={branchCompareModalOpen} onClose={() => { if(isRepoLoaded) setBranchCompareModalOpen(false); }} title="Branch Comparison">
-        <BranchCompareModal 
-            currentBase={diffContext.base}
-            currentHead={diffContext.head}
-            isInitialSetup={isInitialSetup}
-            onClose={() => { if(isRepoLoaded) setBranchCompareModalOpen(false); }} 
-            onApply={handleApplyBranchCompare}
-            onBack={handleBackToRepoSelection}
+        <BranchCompareModal
+          currentBase={diffContext.base}
+          currentHead={diffContext.head}
+          isInitialSetup={isInitialSetup}
+          onClose={() => { if(isRepoLoaded) setBranchCompareModalOpen(false); }}
+          onApply={handleApplyBranchCompare}
+          onBack={handleBackToRepoSelection}
         />
       </Modal>
 
       {/* Tour Guide */}
       <TourGuide isOpen={tourOpen} onClose={() => setTourOpen(false)} />
 
-      {/* Toast Notification */}
-      {notification && (
-        <div className="absolute top-[100px] left-1/2 -translate-x-1/2 bg-editor-selection text-white px-4 py-2 rounded shadow-xl z-[150] animate-fade-in-down border border-editor-accent/50 text-xs font-bold tracking-wide pointer-events-none">
-          {notification}
-        </div>
-      )}
+      {/* Toast Notifications */}
+      <ToastContainer />
     </div>
   );
 };
 
-export default App;
+// Wrap App with LoadingProvider and ErrorBoundary
+const AppWithProviders: React.FC = () => {
+  return (
+    <ErrorBoundary>
+      <LoadingProvider>
+        <App />
+      </LoadingProvider>
+    </ErrorBoundary>
+  );
+};
+
+export default AppWithProviders;

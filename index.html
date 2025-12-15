@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>HyperReview</title>
+        <script src="/frontend/assets/tailwindcss.js"></script>
+        <!--link
+            href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&display=swap"
+            rel="stylesheet"
+        /-->
+        <script>
+            tailwind.config = {
+                theme: {
+                    extend: {
+                        colors: {
+                            editor: {
+                                bg: "#1e1e1e",
+                                fg: "#cccccc",
+                                line: "#2d2d2d",
+                                selection: "#264f78",
+                                sidebar: "#252526",
+                                accent: "#007acc",
+                                error: "#f14c4c",
+                                warning: "#ff8800",
+                                info: "#409eff",
+                                success: "#5cc46b",
+                                modified: "#e2c08d",
+                            },
+                        },
+                        fontFamily: {
+                            mono: ['"JetBrains Mono"', "monospace"],
+                        },
+                    },
+                },
+            };
+        </script>
+        <style>
+            body {
+                font-family: "JetBrains Mono", monospace;
+                background-color: #1e1e1e;
+                color: #cccccc;
+                overflow: hidden;
+            }
+            /* Custom Scrollbar for that IDE feel */
+            ::-webkit-scrollbar {
+                width: 10px;
+                height: 10px;
+            }
+            ::-webkit-scrollbar-track {
+                background: #1e1e1e;
+            }
+            ::-webkit-scrollbar-thumb {
+                background: #424242;
+            }
+            ::-webkit-scrollbar-thumb:hover {
+                background: #4f4f4f;
+            }
+        </style>
+        <script type="importmap">
+            {
+                "imports": {
+                    "lucide-react": "https://esm.sh/lucide-react@^0.561.0",
+                    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+                    "react/": "https://esm.sh/react@^19.2.3/",
+                    "react": "https://esm.sh/react@^19.2.3"
+                }
+            }
+        </script>
+    </head>
+    <body>
+        <div id="root"></div>
+        <script type="module" src="/frontend/index.tsx"></script>
+    </body>
+</html>

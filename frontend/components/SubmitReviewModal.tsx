@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, AlertTriangle, CheckCircle2, XCircle, ArrowRight, Loader2 } from 'lucide-react';
+import { ShieldCheck, AlertTriangle, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getQualityGates } from '../api/client';
+import { useApiClient } from '../api/client';
 import type { QualityGate } from '../api/types';
 
 interface SubmitReviewModalProps {
@@ -11,6 +11,7 @@ interface SubmitReviewModalProps {
 
 const SubmitReviewModal: React.FC<SubmitReviewModalProps> = ({ onClose, onSubmit }) => {
   const { t } = useTranslation();
+  const { getQualityGates, submitReview } = useApiClient();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [gates, setGates] = useState<QualityGate[]>([]);
   const [loading, setLoading] = useState(true);
@@ -23,11 +24,29 @@ const SubmitReviewModal: React.FC<SubmitReviewModalProps> = ({ onClose, onSubmit
         .finally(() => setLoading(false));
   }, []);
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     setIsSubmitting(true);
-    setTimeout(() => {
+    try {
+      // Submit review to external system (e.g., GitLab, Gerrit)
+      const result = await submitReview('gitlab', {
+        // This would contain the actual review data
+        // For now, using placeholder data
+        review_id: 'review-123',
+        comments: [],
+        approval: true,
+        gates: gates
+      });
+
+      if (result.success) {
         onSubmit();
-    }, 1500);
+      } else {
+        console.error('Failed to submit review:', result.message);
+      }
+    } catch (error) {
+      console.error('Error submitting review:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -49,16 +68,16 @@ const SubmitReviewModal: React.FC<SubmitReviewModalProps> = ({ onClose, onSubmit
                     <span className="text-xs">Checking gates...</span>
                 </div>
              ) : (
-                gates.map(gate => (
-                    <div key={gate.id} className="flex items-center justify-between p-2 bg-editor-line/20 rounded border border-editor-line/50">
+                gates.map((gate, index) => (
+                    <div key={index} className="flex items-center justify-between p-2 bg-editor-line/20 rounded border border-editor-line/50">
                         <div className="flex items-center gap-2">
-                            {gate.status === 'passed' && <CheckCircle2 size={14} className="text-editor-success" />}
-                            {gate.status === 'warning' && <AlertTriangle size={14} className="text-editor-warning" />}
-                            {gate.status === 'failed' && <XCircle size={14} className="text-editor-error" />}
+                            {gate.status === 'Passing' && <CheckCircle2 size={14} className="text-editor-success" />}
+                            {gate.status === 'Pending' && <AlertTriangle size={14} className="text-editor-warning" />}
+                            {gate.status === 'Failing' && <XCircle size={14} className="text-editor-error" />}
                             <span className="text-xs text-editor-fg">{gate.name}</span>
                         </div>
-                        <span className={`text-xs font-mono ${gate.status === 'passed' ? 'text-editor-success' : gate.status === 'warning' ? 'text-editor-warning' : 'text-editor-error'}`}>
-                            {gate.message}
+                        <span className={`text-xs font-mono ${gate.status === 'Passing' ? 'text-editor-success' : gate.status === 'Pending' ? 'text-editor-warning' : 'text-editor-error'}`}>
+                            {gate.details || gate.status}
                         </span>
                     </div>
                 ))

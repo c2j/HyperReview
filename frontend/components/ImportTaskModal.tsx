@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Upload, Link, GitPullRequest, FileCode } from 'lucide-react';
+import { Upload, GitPullRequest } from 'lucide-react';
 import { useTranslation } from '../i18n';
 
 interface ImportTaskModalProps {

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ChevronDown, ChevronRight, CheckCircle2, Circle, AlertCircle, Plus } from 'lucide-react';
+import { ChevronDown, ChevronRight, Circle, AlertCircle, Plus } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getTasks } from '../api/client';
+import { useApiClient } from '../api/client';
 import type { Task } from '../api/types';
 
 interface TaskTreeProps {
@@ -12,18 +12,21 @@ interface TaskTreeProps {
 
 const TaskTree: React.FC<TaskTreeProps> = ({ activeTaskId, onSelectTask, onAction }) => {
   const { t } = useTranslation();
+  const { getTasks } = useApiClient();
   const [sections, setSections] = useState({
     pending: true,
     watched: true,
     history: false
   });
-  
+
   const [pendingTasks, setPendingTasks] = useState<Task[]>([]);
   const [watchedTasks, setWatchedTasks] = useState<Task[]>([]);
 
   useEffect(() => {
-    getTasks('pending').then(setPendingTasks).catch(console.error);
-    getTasks('watched').then(setWatchedTasks).catch(console.error);
+    getTasks().then((tasks) => {
+      setPendingTasks(tasks.filter(t => t.status === 'Pending'));
+      setWatchedTasks(tasks.filter(t => t.status === 'Active'));
+    }).catch(console.error);
   }, []);
 
   const toggleSection = (key: keyof typeof sections) => {
@@ -52,10 +55,8 @@ const TaskTree: React.FC<TaskTreeProps> = ({ activeTaskId, onSelectTask, onActio
                 >
                   {task.id === activeTaskId ? (
                      <Circle size={10} className="text-white fill-white" />
-                  ) : task.unreadCount ? (
-                     <Circle size={10} className="text-editor-error fill-editor-error" />
                   ) : (
-                     <Circle size={10} className="text-gray-600" />
+                     <Circle size={10} className="text-editor-error fill-editor-error" />
                   )}
                   <span className="truncate">{task.title}</span>
                 </div>
@@ -83,9 +84,6 @@ const TaskTree: React.FC<TaskTreeProps> = ({ activeTaskId, onSelectTask, onActio
                 >
                    <AlertCircle size={10} className="text-editor-warning" />
                    <span className="truncate">{task.title}</span>
-                   {task.unreadCount && (
-                       <span className="ml-auto text-[10px] bg-editor-error text-white px-1 rounded-full">{task.unreadCount}</span>
-                   )}
                 </div>
               ))}
             </div>

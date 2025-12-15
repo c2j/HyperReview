@@ -1,0 +1,246 @@
+# HyperReview IPC API Contracts - Repository Management
+# OpenAPI 3.0 Specification for Tauri IPC Commands
+# Version: 1.0.0
+# Last Updated: 2025-12-13
+
+openapi: 3.0.3
+info:
+  title: HyperReview Repository Management API
+  description: IPC interface for repository browsing, branch management, and Git operations
+  version: 1.0.0
+  contact:
+    name: HyperReview Backend Team
+
+servers:
+  - url: tauri://ipc
+    description: Tauri IPC interface
+
+components:
+  schemas:
+    Repo:
+      type: object
+      description: Git repository metadata
+      properties:
+        path:
+          type: string
+          description: Absolute path on disk
+          example: "/Users/dev/projects/myrepo"
+          maxLength: 4096
+        branch:
+          type: string
+          description: Current active branch
+          example: "main"
+          maxLength: 256
+        lastOpened:
+          type: string
+          description: Human readable timestamp
+          example: "2 mins ago"
+          maxLength: 64
+      required:
+        - path
+        - branch
+        - lastOpened
+
+    Branch:
+      type: object
+      description: Git branch reference
+      properties:
+        name:
+          type: string
+          description: Branch name
+          example: "feature/user-auth"
+          maxLength: 256
+        isCurrent:
+          type: boolean
+          description: Is this the current branch
+          example: true
+        isRemote:
+          type: boolean
+          description: Is this a remote branch
+          example: false
+        upstream:
+          type: string
+          description: Upstream tracking branch
+          nullable: true
+          example: "origin/main"
+          maxLength: 256
+        lastCommit:
+          type: string
+          description: Last commit hash
+          example: "a1b2c3d4e5f6..."
+          pattern: "^[0-9a-f]{40}$"
+        lastCommitMessage:
+          type: string
+          description: Last commit message
+          example: "Add user authentication"
+          maxLength: 140
+        lastCommitAuthor:
+          type: string
+          description: Last commit author
+          example: "John Doe"
+          maxLength: 128
+        lastCommitDate:
+          type: string
+          format: date-time
+          description: Last commit timestamp (ISO 8601)
+          example: "2025-12-13T10:30:00Z"
+      required:
+        - name
+        - isCurrent
+        - isRemote
+        - lastCommit
+        - lastCommitAuthor
+        - lastCommitDate
+
+    Error:
+      type: object
+      description: Error response
+      properties:
+        code:
+          type: string
+          description: Error code
+          example: "GIT_ERROR"
+          enum:
+            - GIT_ERROR
+            - REPO_NOT_FOUND
+            - INVALID_PATH
+            - PERMISSION_DENIED
+            - IO_ERROR
+        message:
+          type: string
+          description: Human readable error message
+          example: "Failed to resolve reference 'HEAD'"
+      required:
+        - code
+        - message
+
+paths:
+  /open_repo_dialog:
+    post:
+      summary: Open repository selection dialog
+      description: Opens native OS directory picker for repository selection
+      operationId: openRepoDialog
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Repository selected successfully
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - type: string
+                    description: Absolute path of selected directory
+                    example: "/Users/dev/projects/myrepo"
+                  - type: null
+                    description: User cancelled dialog
+        '400':
+          description: Invalid selection
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_recent_repos:
+    post:
+      summary: Get recently opened repositories
+      description: Returns list of recently opened repositories from local config
+      operationId: getRecentRepos
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: List of recent repositories
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Repo'
+                maxItems: 50
+        '500':
+          description: Failed to read repository list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_branches:
+    post:
+      summary: Get repository branches
+      description: Returns list of all local and remote branches for active repository
+      operationId: getBranches
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: List of branches
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Branch'
+        '400':
+          description: No active repository
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "REPO_NOT_FOUND"
+                message: "No repository currently loaded"
+        '500':
+          description: Failed to read branches
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /load_repo:
+    post:
+      summary: Load repository into memory
+      description: Opens and initializes Git repository for operations
+      operationId: loadRepo
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                path:
+                  type: string
+                  description: Absolute path to repository
+                  example: "/Users/dev/projects/myrepo"
+                  maxLength: 4096
+              required:
+                - path
+      responses:
+        '200':
+          description: Repository loaded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Repo'
+        '400':
+          description: Invalid repository path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: "INVALID_PATH"
+                message: "Path does not exist or is not a Git repository"
+        '500':
+          description: Failed to load repository
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

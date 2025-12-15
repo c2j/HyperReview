@@ -1,0 +1,487 @@
+# HyperReview IPC API Contracts - Review Workflow
+# OpenAPI 3.0 Specification for Tauri IPC Commands
+# Version: 1.0.0
+# Last Updated: 2025-12-13
+
+openapi: 3.0.3
+info:
+  title: HyperReview Review Workflow API
+  description: IPC interface for diff viewing, commenting, and review management
+  version: 1.0.0
+  contact:
+    name: HyperReview Backend Team
+
+servers:
+  - url: tauri://ipc
+    description: Tauri IPC interface
+
+components:
+  schemas:
+    DiffLine:
+      type: object
+      description: Single line in a file diff
+      properties:
+        oldLineNumber:
+          type: integer
+          description: Line number in old version
+          nullable: true
+          minimum: 1
+          example: 42
+        newLineNumber:
+          type: integer
+          description: Line number in new version
+          nullable: true
+          minimum: 1
+          example: 45
+        content:
+          type: string
+          description: Line content without newline
+          example: "fn calculateTotal(items: Vec<Item>) -> i32 {"
+          maxLength: 10000
+        type:
+          type: string
+          description: Type of diff line
+          enum:
+            - added
+            - removed
+            - context
+            - header
+          example: "added"
+        severity:
+          type: string
+          description: Analysis severity level
+          nullable: true
+          enum:
+            - ERROR
+            - WARNING
+            - INFO
+            - SUCCESS
+          example: "WARNING"
+        message:
+          type: string
+          description: Analysis message for this line
+          nullable: true
+          example: "Consider using iter().sum() instead"
+          maxLength: 512
+      required:
+        - content
+        - type
+
+    Task:
+      type: object
+      description: Review task or PR awaiting review
+      properties:
+        id:
+          type: string
+          description: Unique task identifier
+          format: uuid
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        title:
+          type: string
+          description: Task title
+          example: "Review: Add user authentication"
+          maxLength: 256
+        status:
+          type: string
+          enum:
+            - active
+            - pending
+            - completed
+            - blocked
+          example: "pending"
+        unreadCount:
+          type: integer
+          description: Number of unread items
+          minimum: 0
+          example: 3
+      required:
+        - id
+        - title
+        - status
+
+    ReviewStats:
+      type: object
+      description: Aggregate statistics for review session
+      properties:
+        totalFiles:
+          type: integer
+          description: Total files in diff
+          minimum: 0
+          example: 25
+        reviewedFiles:
+          type: integer
+          description: Files with comments
+          minimum: 0
+          example: 15
+        pendingFiles:
+          type: integer
+          description: Files without comments
+          minimum: 0
+          example: 10
+        totalComments:
+          type: integer
+          description: Total inline comments
+          minimum: 0
+          example: 42
+        severeIssues:
+          type: integer
+          description: Comments with ERROR/WARNING severity
+          minimum: 0
+          example: 8
+        completionPercentage:
+          type: number
+          description: Review completion percentage
+          minimum: 0
+          maximum: 100
+          format: float
+          example: 60.0
+        estimatedTimeRemaining:
+          type: integer
+          description: Estimated time remaining in minutes
+          nullable: true
+          minimum: 0
+          example: 45
+        filesPerHour:
+          type: number
+          description: Review velocity (files per hour)
+          format: float
+          minimum: 0
+          example: 12.5
+      required:
+        - totalFiles
+        - reviewedFiles
+        - pendingFiles
+        - totalComments
+        - severeIssues
+        - completionPercentage
+
+    QualityGate:
+      type: object
+      description: Status of external quality checks
+      properties:
+        name:
+          type: string
+          description: Gate name
+          example: "CI Pipeline"
+          maxLength: 128
+        status:
+          type: string
+          enum:
+            - passing
+            - failing
+            - pending
+            - unknown
+          example: "passing"
+        details:
+          type: string
+          description: Detailed status message
+          nullable: true
+          example: "All tests passed (42/42)"
+          maxLength: 1024
+        lastChecked:
+          type: string
+          format: date-time
+          description: Last check timestamp
+          example: "2025-12-13T10:30:00Z"
+        url:
+          type: string
+          description: Link to external system
+          nullable: true
+          format: uri
+          example: "https://gitlab.com/project/-/pipelines/123"
+        metadata:
+          type: object
+          description: Additional gate data
+          additionalProperties:
+            type: string
+          nullable: true
+          example:
+            coverage: "85%"
+            build: "success"
+      required:
+        - name
+        - status
+        - lastChecked
+
+    Error:
+      type: object
+      description: Error response
+      properties:
+        code:
+          type: string
+          description: Error code
+          enum:
+            - GIT_ERROR
+            - FILE_NOT_FOUND
+            - INVALID_DIFF
+            - IO_ERROR
+            - PARSE_ERROR
+        message:
+          type: string
+          description: Human readable error message
+      required:
+        - code
+        - message
+
+paths:
+  /get_file_diff:
+    post:
+      summary: Get file diff
+      description: Computes and returns diff for a specific file
+      operationId: getFileDiff
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fileId:
+                  type: string
+                  description: File path relative to repository root
+                  example: "src/main/java/UserService.java"
+                  maxLength: 4096
+              required:
+                - fileId
+      responses:
+        '200':
+          description: File diff computed successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/DiffLine'
+                maxItems: 100000
+        '400':
+          description: Invalid file path or no active repository
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to compute diff
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_tasks:
+    post:
+      summary: Get review tasks
+      description: Fetches tasks filtered by type
+      operationId: getTasks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                type:
+                  type: string
+                  enum:
+                    - pending
+                    - watched
+                  description: Task type filter
+                  example: "pending"
+              required:
+                - type
+      responses:
+        '200':
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Task'
+        '500':
+          description: Failed to fetch tasks
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_review_stats:
+    post:
+      summary: Get review statistics
+      description: Returns aggregate statistics for current review session
+      operationId: getReviewStats
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Review statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewStats'
+        '500':
+          description: Failed to compute statistics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_quality_gates:
+    post:
+      summary: Get quality gate status
+      description: Checks status of CI pipelines, test coverage, and security scanners
+      operationId: getQualityGates
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: List of quality gates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/QualityGate'
+        '500':
+          description: Failed to check quality gates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /add_comment:
+    post:
+      summary: Add inline comment
+      description: Adds a review comment to a specific line
+      operationId: addComment
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filePath:
+                  type: string
+                  description: File path relative to repository
+                  example: "src/main/java/UserService.java"
+                  maxLength: 4096
+                lineNumber:
+                  type: integer
+                  description: Line number (1-based)
+                  minimum: 1
+                  example: 42
+                content:
+                  type: string
+                  description: Comment text
+                  example: "Consider adding validation here"
+                  maxLength: 10000
+                tags:
+                  type: array
+                  description: Tag IDs to apply
+                  items:
+                    type: string
+                    format: uuid
+                  nullable: true
+              required:
+                - filePath
+                - lineNumber
+                - content
+      responses:
+        '200':
+          description: Comment added successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id:
+                    type: string
+                    format: uuid
+                    example: "550e8400-e29b-41d4-a716-446655440000"
+                  createdAt:
+                    type: string
+                    format: date-time
+                    example: "2025-12-13T10:30:00Z"
+        '400':
+          description: Invalid input
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to add comment
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /submit_review:
+    post:
+      summary: Submit review to external system
+      description: Pushes local comments to GitLab, Gerrit, or CodeArts
+      operationId: submitReview
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                system:
+                  type: string
+                  enum:
+                    - gitlab
+                    - gerrit
+                    - codearts
+                  example: "gitlab"
+                projectId:
+                  type: string
+                  description: External system project/MR identifier
+                  example: "123"
+                mrIid:
+                  type: string
+                  description: Merge request ID (if applicable)
+                  nullable: true
+                  example: "42"
+                comments:
+                  type: array
+                  description: Comments to submit
+                  items:
+                    type: object
+                    properties:
+                      filePath:
+                        type: string
+                      lineNumber:
+                        type: integer
+                      content:
+                        type: string
+                  minItems: 1
+              required:
+                - system
+                - projectId
+                - comments
+      responses:
+        '200':
+          description: Review submitted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  submittedCount:
+                    type: integer
+                    example: 15
+        '400':
+          description: Invalid submission data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to submit review
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { Layers, History, PieChart, ListChecks, GripVertical, CheckSquare, Square, Trash2, Loader2 } from 'lucide-react';
 import { useTranslation } from '../i18n';
-import { getHeatmap, getBlame, getReviewStats, getChecklist } from '../api/client';
+import { useApiClient } from '../api/client';
+import { useRepositoryStatus } from '../hooks/useRepository';
 import type { HeatmapItem, BlameInfo, ReviewStats, ChecklistItem } from '../api/types';
 
 enum Tab {
@@ -17,6 +18,8 @@ interface RightPanelProps {
 
 const RightPanel: React.FC<RightPanelProps> = ({ onAction }) => {
   const { t } = useTranslation();
+  const { getHeatmap, getBlame, getReviewStats, getChecklist } = useApiClient();
+  const { isRepoLoaded, getRepositoryInfo } = useRepositoryStatus();
   const [activeTab, setActiveTab] = useState<Tab>(Tab.HEATMAP);
   const [loading, setLoading] = useState(false);
 
@@ -26,17 +29,61 @@ const RightPanel: React.FC<RightPanelProps> = ({ onAction }) => {
   const [statsData, setStatsData] = useState<ReviewStats | null>(null);
   const [listItems, setListItems] = useState<ChecklistItem[]>([]);
 
+  // Clear all data when repository changes
+  const repoInfo = getRepositoryInfo();
+  const currentRepoPath = repoInfo?.path;
+
+  useEffect(() => {
+    if (currentRepoPath) {
+      // Repository changed, clear all data
+      setHeatmapData([]);
+      setBlameData(null);
+      setStatsData(null);
+      setListItems([]);
+    }
+  }, [currentRepoPath]);
+
+  // Initial load check
+  useEffect(() => {
+    if (isRepoLoaded && activeTab === Tab.HEATMAP) {
+      // Only fetch if we don't have data yet for this repo
+      if (heatmapData.length === 0) {
+        setLoading(true);
+        getHeatmap()
+          .then(data => {
+            setHeatmapData(data);
+            setLoading(false);
+          })
+          .catch(err => {
+            console.error('Initial heatmap fetch failed:', err);
+            setLoading(false);
+          });
+      }
+    }
+  }, [isRepoLoaded, heatmapData.length, activeTab, currentRepoPath]);
+
   // Drag State
   const [draggedItemIndex, setDraggedItemIndex] = useState<number | null>(null);
 
   // Fetch data on tab change
   useEffect(() => {
+    if (!isRepoLoaded || !currentRepoPath) {
+      // No repository loaded, skip loading
+      setLoading(false);
+      return;
+    }
+
     setLoading(true);
     let promise: Promise<any>;
 
     switch (activeTab) {
         case Tab.HEATMAP:
-            promise = getHeatmap().then(setHeatmapData);
+            promise = getHeatmap()
+                .then(setHeatmapData)
+                .catch(err => {
+                    console.error('Failed to load heatmap:', err);
+                    setHeatmapData([]);
+                });
             break;
         case Tab.BLAME:
             promise = getBlame('current-file').then(setBlameData);
@@ -45,43 +92,44 @@ const RightPanel: React.FC<RightPanelProps> = ({ onAction }) => {
             promise = getReviewStats().then(setStatsData);
             break;
         case Tab.LIST:
-            // Only load checklist if empty to preserve local edits
-            if (listItems.length === 0) {
-                promise = getChecklist().then(setListItems);
-            } else {
-                promise = Promise.resolve();
-            }
+            // Always reload checklist when switching repositories to get fresh data
+            promise = getChecklist('current-file')
+                .then(setListItems)
+                .catch(err => {
+                    console.error('Failed to load checklist:', err);
+                    setListItems([]);
+                });
             break;
         default:
             promise = Promise.resolve();
     }
 
     promise.catch(console.error).finally(() => setLoading(false));
-  }, [activeTab]);
+  }, [activeTab, isRepoLoaded, currentRepoPath]);
 
 
   // List Actions
   const toggleCheck = (id: string) => {
     setListItems(prev => prev.map(item => 
-        item.id === id ? { ...item, checked: !item.checked } : item
+        item.id === id ? { ...item, is_checked: !item.is_checked } : item
     ));
   };
 
   const handleSelectAll = () => {
-    const allChecked = listItems.every(i => i.checked);
-    setListItems(prev => prev.map(item => ({ ...item, checked: !allChecked })));
+    const allChecked = listItems.every(i => i.is_checked);
+    setListItems(prev => prev.map(item => ({ ...item, is_checked: !allChecked })));
     onAction(allChecked ? "Unselected All" : "Selected All");
   };
 
   const handleInvertSelection = () => {
-    setListItems(prev => prev.map(item => ({ ...item, checked: !item.checked })));
+    setListItems(prev => prev.map(item => ({ ...item, is_checked: !item.is_checked })));
     onAction("Inverted Selection");
   };
 
   const handleRemoveSelected = () => {
-    const count = listItems.filter(i => i.checked).length;
+    const count = listItems.filter(i => i.is_checked).length;
     if (count === 0) return;
-    setListItems(prev => prev.filter(item => !item.checked));
+    setListItems(prev => prev.filter(item => !item.is_checked));
     onAction(`Removed ${count} items from pending list`);
   };
 
@@ -155,47 +203,91 @@ const RightPanel: React.FC<RightPanelProps> = ({ onAction }) => {
                 <div className="space-y-4">
                     <h3 className="text-xs font-bold text-gray-400 uppercase">{t('rightpanel.heatmap.title')}</h3>
                     <div className="text-[11px] text-gray-500 mb-2">{t('rightpanel.heatmap.desc')}</div>
-                    
-                    <div className="grid grid-cols-2 gap-2">
-                        {heatmapData.map(item => {
-                            const borderColor = item.impact === 'high' ? 'border-editor-error/40' : item.impact === 'medium' ? 'border-editor-error/20' : 'border-gray-600';
-                            const opacity = item.impact === 'high' ? 'opacity-20' : item.impact === 'medium' ? 'opacity-10' : 'opacity-0';
-                            const textColor = item.impact === 'low' ? 'text-gray-300' : 'text-white';
-                            
-                            return (
-                                <div key={item.id} className={`bg-editor-line p-3 rounded border ${borderColor} relative overflow-hidden group cursor-pointer hover:border-white transition-colors`}
-                                     onClick={() => onAction(`Focus: ${item.name} Module`)}>
-                                    {item.impact !== 'low' && <div className={`absolute inset-0 bg-editor-error ${opacity}`}></div>}
-                                    <span className={`font-bold relative ${textColor}`}>{item.name}</span>
-                                    <div className="mt-2 text-[10px] text-gray-400 relative">
-                                        {item.impact === 'high' ? t('rightpanel.heatmap.impact.high') : 
-                                         item.impact === 'medium' ? t('rightpanel.heatmap.impact.medium') : 
-                                         t('rightpanel.heatmap.impact.low')}
+                    {!isRepoLoaded && (
+                        <div className="text-yellow-500 text-xs mb-2">⚠️ No repository loaded</div>
+                    )}
+
+                    {heatmapData.length === 0 ? (
+                        <div className="text-gray-500 text-xs italic text-center py-8">
+                            {isRepoLoaded ? 'No heatmap data available' : 'Load a repository to view heatmap'}
+                        </div>
+                    ) : (
+                        <div className="grid grid-cols-1 gap-2">
+                            {heatmapData.map((item) => {
+                                const categoryColors = {
+                                    High: 'border-editor-error/50 bg-editor-error/10',
+                                    Medium: 'border-editor-warning/50 bg-editor-warning/10',
+                                    Low: 'border-editor-info/50 bg-editor-info/10'
+                                };
+
+                                const categoryTextColors = {
+                                    High: 'text-editor-error',
+                                    Medium: 'text-editor-warning',
+                                    Low: 'text-editor-info'
+                                };
+
+                                return (
+                                    <div
+                                        key={item.file_path}
+                                        className={`p-3 rounded border cursor-pointer transition-all hover:opacity-80 ${categoryColors[item.category]}`}
+                                        onClick={() => onAction(`FILE_SELECTED:${item.file_path}`)}
+                                    >
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1 min-w-0">
+                                                <div className="text-xs font-mono text-white truncate">
+                                                    {item.file_path}
+                                                </div>
+                                                <div className="flex items-center gap-2 mt-1">
+                                                    <span className={`text-[10px] uppercase font-bold ${categoryTextColors[item.category]}`}>
+                                                        {item.category}
+                                                    </span>
+                                                    <span className="text-[10px] text-gray-500">
+                                                        Changed {item.change_frequency} times
+                                                    </span>
+                                                </div>
+                                            </div>
+                                            <div className="text-right ml-2">
+                                                <div className="text-[10px] text-gray-400">
+                                                    Impact
+                                                </div>
+                                                <div className={`text-xs font-bold ${categoryTextColors[item.category]}`}>
+                                                    {Math.round(item.impact_score * 100)}%
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        {/* Progress bar showing impact */}
+                                        <div className="mt-2 h-1 bg-editor-line rounded-full overflow-hidden">
+                                            <div
+                                                className={`h-full ${categoryTextColors[item.category].replace('text-', 'bg-')}`}
+                                                style={{ width: `${item.impact_score * 100}%` }}
+                                            />
+                                        </div>
                                     </div>
-                                </div>
-                            );
-                        })}
-                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
                 </div>
             )}
 
             {activeTab === Tab.BLAME && blameData && (
                  <div className="space-y-4">
                     <div className="flex items-center gap-2 mb-2 hover:bg-editor-line p-1 rounded cursor-pointer transition-colors" onClick={() => onAction("Show Author Details")}>
-                        <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white">{blameData.avatar}</div>
+                        <div className="w-6 h-6 rounded-full bg-blue-500 flex items-center justify-center text-[10px] font-bold text-white">{blameData.lines[0]?.author_name?.[0] || '?'}</div>
                         <div className="flex flex-col">
-                            <span className="text-xs font-bold text-white">{blameData.author}</span>
-                            <span className="text-[10px] text-gray-400">{blameData.time}</span>
+                            <span className="text-xs font-bold text-white">{blameData.lines[0]?.author_name || 'Unknown'}</span>
+                            <span className="text-[10px] text-gray-400">{blameData.lines[0]?.commit_date || ''}</span>
                         </div>
                     </div>
                     <div className="bg-editor-line p-2 rounded text-xs text-gray-300 border-l-2 border-editor-accent cursor-pointer hover:bg-gray-700 transition-colors" onClick={() => onAction("View Linked PR")}>
-                        {blameData.prName}
+                        {blameData.lines[0]?.commit_message?.substring(0, 50) || 'No commit message'}
                     </div>
                     <div className="text-[11px] text-gray-500">
-                        {t('rightpanel.blame.reviewer')}: <span className="text-editor-accent cursor-pointer hover:underline">{blameData.reviewer}</span> ({blameData.reviewerStatus})
+                        Last changed in commit <span className="text-editor-accent">{blameData.lines[0]?.commit_oid?.substring(0, 7)}</span>
                     </div>
                     <div className="bg-gray-800 p-2 rounded text-[11px] text-gray-400 italic">
-                        {blameData.comment}
+                        {blameData.lines[0]?.content?.substring(0, 100)}
                     </div>
                  </div>
             )}
@@ -206,28 +298,28 @@ const RightPanel: React.FC<RightPanelProps> = ({ onAction }) => {
                     <div className="flex flex-col gap-2">
                          <div className="flex justify-between text-xs">
                              <span className="text-gray-400">{t('rightpanel.stats.reviewed')}</span>
-                             <span className="text-white">{statsData.reviewedCount} / {statsData.totalCount}</span>
+                             <span className="text-white">{statsData.reviewed_files} / {statsData.total_files}</span>
                          </div>
                          <div className="w-full bg-editor-line h-1.5 rounded-full overflow-hidden">
-                             <div className="bg-editor-success h-full" style={{width: `${(statsData.reviewedCount / statsData.totalCount) * 100}%`}}></div>
+                             <div className="bg-editor-success h-full" style={{width: `${(statsData.reviewed_files / statsData.total_files) * 100}%`}}></div>
                          </div>
                     </div>
 
                     <div className="grid grid-cols-2 gap-2 mt-4">
                         <div className="bg-editor-line p-2 rounded text-center cursor-pointer hover:bg-editor-line/80 transition-colors" onClick={() => onAction("Filter Severe Issues")}>
-                            <div className="text-xl font-bold text-editor-error">{statsData.severeCount}</div>
+                            <div className="text-xl font-bold text-editor-error">{statsData.severe_issues}</div>
                             <div className="text-[10px] text-gray-400 uppercase">{t('rightpanel.stats.severe')}</div>
                         </div>
                         <div className="bg-editor-line p-2 rounded text-center cursor-pointer hover:bg-editor-line/80 transition-colors" onClick={() => onAction("Filter Warnings")}>
-                            <div className="text-xl font-bold text-editor-warning">{statsData.warningCount}</div>
+                            <div className="text-xl font-bold text-editor-warning">{statsData.total_comments - statsData.severe_issues}</div>
                             <div className="text-[10px] text-gray-400 uppercase">{t('rightpanel.stats.warning')}</div>
                         </div>
                         <div className="bg-editor-line p-2 rounded text-center cursor-pointer hover:bg-editor-line/80 transition-colors" onClick={() => onAction("Filter Pending Replies")}>
-                            <div className="text-xl font-bold text-editor-info">{statsData.pendingCount}</div>
+                            <div className="text-xl font-bold text-editor-info">{statsData.pending_files}</div>
                             <div className="text-[10px] text-gray-400 uppercase">{t('rightpanel.stats.pending')}</div>
                         </div>
                         <div className="bg-editor-line p-2 rounded text-center">
-                            <div className="text-xl font-bold text-white">{statsData.estimatedTime}</div>
+                            <div className="text-xl font-bold text-white">{statsData.estimated_time_remaining || 0}m</div>
                             <div className="text-[10px] text-gray-400 uppercase">{t('rightpanel.stats.time')}</div>
                         </div>
                     </div>
@@ -252,15 +344,15 @@ const RightPanel: React.FC<RightPanelProps> = ({ onAction }) => {
                                     onDragEnd={handleDragEnd}
                                     onDragOver={(e) => e.preventDefault()}
                                     className={`flex items-center gap-2 px-2 py-1.5 rounded group transition-colors cursor-move 
-                                        ${item.checked ? 'bg-editor-selection/30 border border-editor-selection/50' : 'bg-editor-line/10 border border-transparent hover:bg-editor-line/50'}
+                                        ${item.is_checked ? 'bg-editor-selection/30 border border-editor-selection/50' : 'bg-editor-line/10 border border-transparent hover:bg-editor-line/50'}
                                         ${draggedItemIndex === index ? 'opacity-50 dashed border-gray-500' : ''}`}
                                 >
                                     <GripVertical size={14} className="text-gray-600 group-hover:text-gray-400 shrink-0" />
                                     <div onClick={() => toggleCheck(item.id)} className="cursor-pointer text-gray-400 hover:text-white shrink-0">
-                                        {item.checked ? <CheckSquare size={14} className="text-editor-accent" /> : <Square size={14} />}
+                                        {item.is_checked ? <CheckSquare size={14} className="text-editor-accent" /> : <Square size={14} />}
                                     </div>
-                                    <span className={`text-xs font-mono truncate cursor-text select-text flex-1 ${item.checked ? 'text-white' : 'text-gray-400'}`}>
-                                        {item.text}
+                                    <span className={`text-xs font-mono truncate cursor-text select-text flex-1 ${item.is_checked ? 'text-white' : 'text-gray-400'}`}>
+                                        {item.description}
                                     </span>
                                 </div>
                              ))
@@ -277,7 +369,7 @@ const RightPanel: React.FC<RightPanelProps> = ({ onAction }) => {
                                  {t('rightpanel.list.invert')}
                              </button>
                          </div>
-                         <button onClick={handleRemoveSelected} disabled={!listItems.some(i => i.checked)} className="px-2 py-1 bg-editor-error/10 hover:bg-editor-error/30 text-editor-error rounded text-[10px] transition-colors border border-editor-error/30 flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed">
+                         <button onClick={handleRemoveSelected} disabled={!listItems.some(i => i.is_checked)} className="px-2 py-1 bg-editor-error/10 hover:bg-editor-error/30 text-editor-error rounded text-[10px] transition-colors border border-editor-error/30 flex items-center gap-1 disabled:opacity-30 disabled:cursor-not-allowed">
                              <Trash2 size={10} /> {t('rightpanel.list.remove')}
                          </button>
                      </div>

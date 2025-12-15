@@ -1,0 +1,480 @@
+# HyperReview IPC API Contracts - Configuration & Tools
+# OpenAPI 3.0 Specification for Tauri IPC Commands
+# Version: 1.0.0
+# Last Updated: 2025-12-13
+
+openapi: 3.0.3
+info:
+  title: HyperReview Configuration & Tools API
+  description: IPC interface for tags, search, templates, and configuration
+  version: 1.0.0
+  contact:
+    name: HyperReview Backend Team
+
+servers:
+  - url: tauri://ipc
+    description: Tauri IPC interface
+
+components:
+  schemas:
+    Tag:
+      type: object
+      description: User-defined tag for categorizing comments
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique tag ID
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        label:
+          type: string
+          description: Tag display name
+          example: "N+1 Problem"
+          maxLength: 64
+        color:
+          type: string
+          description: Hex color code
+          pattern: "^#[0-9A-Fa-f]{6}$"
+          example: "#FF5733"
+        description:
+          type: string
+          description: Optional tag description
+          nullable: true
+          maxLength: 500
+          example: "Detects potential N+1 query problems"
+        usageCount:
+          type: integer
+          description: Number of times tag has been used
+          minimum: 0
+          example: 23
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2025-12-13T10:30:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2025-12-13T10:30:00Z"
+      required:
+        - id
+        - label
+        - color
+        - usageCount
+        - createdAt
+        - updatedAt
+
+    SearchResult:
+      type: object
+      description: Search result item
+      properties:
+        type:
+          type: string
+          enum:
+            - file
+            - symbol
+            - commit
+            - command
+          example: "file"
+        filePath:
+          type: string
+          description: File path (for file/symbol types)
+          nullable: true
+          example: "src/main/java/UserService.java"
+          maxLength: 4096
+        lineNumber:
+          type: integer
+          description: Line number (for symbol type)
+          nullable: true
+          minimum: 1
+          example: 42
+        content:
+          type: string
+          description: Matched content or description
+          example: "fn validateUser(input: &UserInput)"
+          maxLength: 2048
+        highlight:
+          type: string
+          description: Highlighted snippet
+          nullable: true
+          example: "fn <mark>validateUser</mark>(input: &UserInput)"
+          maxLength: 2048
+        score:
+          type: number
+          description: Relevance score (0.0-1.0)
+          minimum: 0
+          maximum: 1
+          format: float
+          example: 0.95
+      required:
+        - type
+        - content
+        - score
+
+    ReviewTemplate:
+      type: object
+      description: Canned response template for review comments
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique template ID
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        name:
+          type: string
+          description: Template name
+          example: "Style: Use meaningful variable names"
+          maxLength: 128
+        content:
+          type: string
+          description: Template text with placeholders
+          example: "Consider using a more descriptive name for {{variable}}. Current name doesn't convey intent."
+          maxLength: 10000
+        placeholders:
+          type: array
+          description: Placeholder variables in template
+          items:
+            type: string
+            example: "variable"
+          nullable: true
+        category:
+          type: string
+          description: Template category
+          nullable: true
+          example: "style"
+          maxLength: 64
+        usageCount:
+          type: integer
+          description: Number of times template has been used
+          minimum: 0
+          example: 15
+        createdAt:
+          type: string
+          format: date-time
+          description: Creation timestamp
+          example: "2025-12-13T10:30:00Z"
+        updatedAt:
+          type: string
+          format: date-time
+          description: Last update timestamp
+          example: "2025-12-13T10:30:00Z"
+      required:
+        - id
+        - name
+        - content
+        - usageCount
+        - createdAt
+        - updatedAt
+
+    SearchRequest:
+      type: object
+      description: Search request parameters
+      properties:
+        query:
+          type: string
+          description: Search query string
+          example: "validateUser"
+          maxLength: 512
+        type:
+          type: string
+          description: Search type filter
+          enum:
+            - all
+            - files
+            - symbols
+            - commits
+          example: "all"
+        maxResults:
+          type: integer
+          description: Maximum number of results
+          minimum: 1
+          maximum: 1000
+          default: 100
+      required:
+        - query
+
+    Error:
+      type: object
+      description: Error response
+      properties:
+        code:
+          type: string
+          description: Error code
+          enum:
+            - SEARCH_ERROR
+            - INVALID_QUERY
+            - FILE_NOT_FOUND
+            - TEMPLATE_ERROR
+            - TAG_ERROR
+        message:
+          type: string
+          description: Human readable error message
+      required:
+        - code
+        - message
+
+paths:
+  /get_tags:
+    post:
+      summary: Get configured tags
+      description: Returns all user-defined tags for categorizing comments
+      operationId: getTags
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: List of configured tags
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Tag'
+                maxItems: 1000
+        '500':
+          description: Failed to retrieve tags
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /create_tag:
+    post:
+      summary: Create new tag
+      description: Creates a new user-defined tag
+      operationId: createTag
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                label:
+                  type: string
+                  description: Tag display name
+                  example: "Security Risk"
+                  maxLength: 64
+                color:
+                  type: string
+                  description: Hex color code
+                  pattern: "^#[0-9A-Fa-f]{6}$"
+                  example: "#FF5733"
+                description:
+                  type: string
+                  description: Optional tag description
+                  nullable: true
+                  maxLength: 500
+              required:
+                - label
+                - color
+      responses:
+        '200':
+          description: Tag created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Tag'
+        '400':
+          description: Invalid tag data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to create tag
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /search:
+    post:
+      summary: Search repository
+      description: Searches across files, symbols, and commits
+      operationId: search
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SearchRequest'
+      responses:
+        '200':
+          description: Search results
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SearchResult'
+                maxItems: 1000
+        '400':
+          description: Invalid search query
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Search failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_commands:
+    post:
+      summary: Get command palette items
+      description: Returns indexable items for command palette
+      operationId: getCommands
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: List of command palette items
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  allOf:
+                    - $ref: '#/components/schemas/SearchResult'
+                    - type: object
+                      properties:
+                        category:
+                          type: string
+                          example: "file"
+                        shortcut:
+                          type: string
+                          description: Keyboard shortcut
+                          nullable: true
+                          example: "ctrl+p"
+                example:
+                  - type: "file"
+                    filePath: "src/main/java/UserService.java"
+                    content: "UserService.java"
+                    score: 1.0
+                    category: "file"
+                    shortcut: "ctrl+p"
+        '500':
+          description: Failed to get commands
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_review_templates:
+    post:
+      summary: Get review templates
+      description: Returns configured review comment templates
+      operationId: getReviewTemplates
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: List of review templates
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ReviewTemplate'
+                maxItems: 1000
+        '500':
+          description: Failed to retrieve templates
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /create_template:
+    post:
+      summary: Create review template
+      description: Creates a new review comment template
+      operationId: createTemplate
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Template name
+                  example: "Style: Naming convention"
+                  maxLength: 128
+                content:
+                  type: string
+                  description: Template text with placeholders
+                  example: "Please follow naming conventions for {{type}}. Consider using {{suggestion}}."
+                  maxLength: 10000
+                category:
+                  type: string
+                  description: Template category
+                  nullable: true
+                  example: "style"
+                  maxLength: 64
+              required:
+                - name
+                - content
+      responses:
+        '200':
+          description: Template created successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReviewTemplate'
+        '400':
+          description: Invalid template data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to create template
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /sync_repo:
+    post:
+      summary: Synchronize repository
+      description: Fetches latest changes from remote repository
+      operationId: syncRepo
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Repository synced successfully
+          content:
+            application/json:
+              type: object
+              properties:
+                success:
+                  type: boolean
+                  example: true
+                newCommits:
+                  type: integer
+                  description: Number of new commits fetched
+                  example: 5
+                updatedBranches:
+                  type: array
+                  description: List of updated branches
+                  items:
+                    type: string
+                  example: ["main", "develop"]
+        '400':
+          description: No active repository or no remote configured
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Sync failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'

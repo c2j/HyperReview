@@ -1,0 +1,489 @@
+# HyperReview IPC API Contracts - Insights & Analysis
+# OpenAPI 3.0 Specification for Tauri IPC Commands
+# Version: 1.0.0
+# Last Updated: 2025-12-13
+
+openapi: 3.0.3
+info:
+  title: HyperReview Insights & Analysis API
+  description: IPC interface for architectural impact, code analysis, and intelligent insights
+  version: 1.0.0
+  contact:
+    name: HyperReview Backend Team
+
+servers:
+  - url: tauri://ipc
+    description: Tauri IPC interface
+
+components:
+  schemas:
+    HeatmapItem:
+      type: object
+      description: Data point for architectural impact visualization
+      properties:
+        filePath:
+          type: string
+          description: File path relative to repository
+          example: "src/main/java/UserService.java"
+          maxLength: 4096
+        impactScore:
+          type: number
+          description: Overall impact score (0.0-1.0, higher = more impactful)
+          minimum: 0
+          maximum: 1
+          format: float
+          example: 0.85
+        churnScore:
+          type: number
+          description: Recent change frequency (0.0-1.0)
+          minimum: 0
+          maximum: 1
+          format: float
+          example: 0.92
+        complexityScore:
+          type: number
+          description: Code complexity (0.0-1.0)
+          minimum: 0
+          maximum: 1
+          format: float
+          example: 0.73
+        changeFrequency:
+          type: integer
+          description: Number of commits in last 30 days
+          minimum: 0
+          example: 15
+        linesOfCode:
+          type: integer
+          description: Approximate lines of code
+          minimum: 0
+          example: 1247
+        category:
+          type: string
+          enum:
+            - high
+            - medium
+            - low
+          example: "high"
+      required:
+        - filePath
+        - impactScore
+        - churnScore
+        - complexityScore
+        - category
+
+    BlameLine:
+      type: object
+      description: Single line of git blame information
+      properties:
+        lineNumber:
+          type: integer
+          description: Line number in file
+          minimum: 1
+          example: 42
+        content:
+          type: string
+          description: Line content
+          example: "fn validateUser(input: &UserInput) -> Result<User, Error> {"
+          maxLength: 10000
+        commitOid:
+          type: string
+          description: Commit hash
+          pattern: "^[0-9a-f]{40}$"
+          example: "a1b2c3d4e5f6..."
+        commitMessage:
+          type: string
+          description: Commit message
+          example: "Add user validation"
+          maxLength: 512
+        authorName:
+          type: string
+          description: Author name
+          example: "John Doe"
+          maxLength: 128
+        authorEmail:
+          type: string
+          format: email
+          description: Author email
+          example: "john@example.com"
+        committerName:
+          type: string
+          description: Committer name
+          example: "John Doe"
+          maxLength: 128
+        committerEmail:
+          type: string
+          format: email
+          description: Committer email
+          example: "john@example.com"
+        commitDate:
+          type: string
+          format: date-time
+          description: Commit timestamp
+          example: "2025-12-13T10:30:00Z"
+      required:
+        - lineNumber
+        - content
+        - commitOid
+        - commitMessage
+        - authorName
+        - commitDate
+
+    BlameInfo:
+      type: object
+      description: Git blame information for a file
+      properties:
+        filePath:
+          type: string
+          description: File path
+          example: "src/main/java/UserService.java"
+          maxLength: 4096
+        lines:
+          type: array
+          description: Line-by-line blame data
+          items:
+            $ref: '#/components/schemas/BlameLine'
+      required:
+        - filePath
+        - lines
+
+    ChecklistItem:
+      type: object
+      description: Smart checklist item based on file types
+      properties:
+        id:
+          type: string
+          format: uuid
+          description: Unique checklist item ID
+          example: "550e8400-e29b-41d4-a716-446655440000"
+        description:
+          type: string
+          description: Check description
+          example: "Verify SQL injection risks in Mapper.xml files"
+          maxLength: 512
+        category:
+          type: string
+          enum:
+            - security
+            - performance
+            - style
+            - architecture
+            - testing
+            - documentation
+          example: "security"
+        severity:
+          type: string
+          enum:
+            - ERROR
+            - WARNING
+            - INFO
+            - SUCCESS
+          example: "ERROR"
+        applicableFileTypes:
+          type: array
+          description: File extensions that trigger this check
+          items:
+            type: string
+            example: ["java", "xml"]
+          minItems: 1
+        applicablePatterns:
+          type: array
+          description: Regex patterns that trigger this check
+          items:
+            type: string
+          nullable: true
+        isChecked:
+          type: boolean
+          description: User has checked this item
+          example: false
+        isAutoCheckable:
+          type: boolean
+          description: Can be automatically verified
+          example: true
+        relatedFile:
+          type: string
+          description: File path this check applies to
+          nullable: true
+          example: "src/main/java/UserService.java"
+          maxLength: 4096
+      required:
+        - id
+        - description
+        - category
+        - severity
+        - applicableFileTypes
+        - isChecked
+        - isAutoCheckable
+
+    Error:
+      type: object
+      description: Error response
+      properties:
+        code:
+          type: string
+          description: Error code
+          enum:
+            - ANALYSIS_ERROR
+            - PARSE_ERROR
+            - FILE_NOT_FOUND
+            - GIT_ERROR
+            - TIMEOUT_ERROR
+        message:
+          type: string
+          description: Human readable error message
+      required:
+        - code
+        - message
+
+paths:
+  /get_heatmap:
+    post:
+      summary: Get architectural impact heatmap
+      description: Returns analysis data for architectural impact visualization
+      operationId: getHeatmap
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Heatmap data computed successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/HeatmapItem'
+                maxItems: 10000
+        '400':
+          description: No active repository
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to compute heatmap
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_blame:
+    post:
+      summary: Get git blame information
+      description: Fetches git blame for a specific file
+      operationId: getBlame
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fileId:
+                  type: string
+                  description: File path relative to repository
+                  example: "src/main/java/UserService.java"
+                  maxLength: 4096
+              required:
+                - fileId
+      responses:
+        '200':
+          description: Blame information retrieved successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlameInfo'
+        '400':
+          description: Invalid file path
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to get blame
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /get_checklist:
+    post:
+      summary: Get smart checklist
+      description: Generates checklist based on modified file types
+      operationId: getChecklist
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Smart checklist generated successfully
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/ChecklistItem'
+                maxItems: 100
+        '400':
+          description: No active repository or diff data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Failed to generate checklist
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /analyze_complexity:
+    post:
+      summary: Analyze code complexity
+      description: Calculates cyclomatic complexity for files
+      operationId: analyzeComplexity
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                fileId:
+                  type: string
+                  description: File path relative to repository
+                  example: "src/main/java/UserService.java"
+                  maxLength: 4096
+              required:
+                - fileId
+      responses:
+        '200':
+          description: Complexity analysis complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  filePath:
+                    type: string
+                    example: "src/main/java/UserService.java"
+                  totalComplexity:
+                    type: integer
+                    description: Total cyclomatic complexity
+                    minimum: 0
+                    example: 42
+                  averageComplexity:
+                    type: number
+                    description: Average complexity per function
+                    format: float
+                    example: 7.2
+                  functions:
+                    type: array
+                    description: Per-function complexity breakdown
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          example: "validateUser"
+                        complexity:
+                          type: integer
+                          example: 5
+                        startLine:
+                          type: integer
+                          example: 25
+                        endLine:
+                          type: integer
+                          example: 48
+                      required:
+                        - name
+                        - complexity
+                        - startLine
+                        - endLine
+                required:
+                  - filePath
+                  - totalComplexity
+                  - averageComplexity
+                  - functions
+        '400':
+          description: Invalid file or unsupported language
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Analysis failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+
+  /scan_security:
+    post:
+      summary: Security scan
+      description: Scans code for security vulnerabilities
+      operationId: scanSecurity
+      requestBody:
+        required: false
+      responses:
+        '200':
+          description: Security scan complete
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  totalIssues:
+                    type: integer
+                    minimum: 0
+                    example: 12
+                  highSeverity:
+                    type: integer
+                    minimum: 0
+                    example: 3
+                  mediumSeverity:
+                    type: integer
+                    minimum: 0
+                    example: 7
+                  lowSeverity:
+                    type: integer
+                    minimum: 0
+                    example: 2
+                  issues:
+                    type: array
+                    description: Detailed security issues
+                    items:
+                      type: object
+                      properties:
+                        filePath:
+                          type: string
+                        lineNumber:
+                          type: integer
+                        severity:
+                          type: string
+                          enum:
+                            - ERROR
+                            - WARNING
+                            - INFO
+                        type:
+                          type: string
+                          example: "hardcoded-secret"
+                        description:
+                          type: string
+                          example: "Potential hardcoded API key detected"
+                        recommendation:
+                          type: string
+                          example: "Use environment variables for sensitive data"
+                      required:
+                        - filePath
+                        - severity
+                        - type
+                        - description
+                required:
+                  - totalIssues
+                  - highSeverity
+                  - mediumSeverity
+                  - lowSeverity
+        '500':
+          description: Security scan failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
