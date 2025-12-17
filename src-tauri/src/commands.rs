@@ -5,7 +5,6 @@ use crate::models::*;
 use crate::AppState;
 use crate::storage;
 use tauri::State;
-use serde::{Serialize, Deserialize};
 
 // Import modules
 use crate::git;
@@ -22,24 +21,14 @@ pub async fn open_repo_dialog() -> Result<Option<String>, String> {
 
 /// Opens a repository selection dialog from frontend request
 #[tauri::command]
-pub async fn open_repo_dialog_frontend(app: tauri::AppHandle) -> Result<Option<String>, String> {
+pub async fn open_repo_dialog_frontend(_app: tauri::AppHandle) -> Result<Option<String>, String> {
     log::info!("Opening repository selection dialog from frontend");
 
-    // Use Tauri's dialog plugin to open a folder selection dialog
-    use tauri_plugin_dialog::DialogExt;
-
-    // Use blocking API since we're in an async context
-    match app.dialog().file().blocking_pick_folder() {
-        Some(path) => {
-            let path_str = path.to_string();
-            log::info!("User selected repository path: {}", path_str);
-            Ok(Some(path_str))
-        },
-        None => {
-            log::info!("User cancelled repository selection");
-            Ok(None)
-        }
-    }
+    // Note: In Tauri v1, folder dialogs should be opened from the frontend
+    // using the @tauri-apps/api dialog module
+    // This backend command is kept for compatibility but frontend should handle dialogs
+    log::warn!("Folder selection should be done from frontend in Tauri v1");
+    Err("Use frontend dialog API to select folder".to_string())
 }
 
 /// Gets list of recently opened repositories

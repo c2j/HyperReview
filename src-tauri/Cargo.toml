@@ -16,13 +16,13 @@ name = "hyperreview_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "1.5.4", features = [] }
 
 [dependencies]
 # Tauri
-tauri = { version = "2", features = [] }
-tauri-plugin-opener = "2"
-tauri-plugin-dialog = "2"
+tauri = { version = "1.8", features = [ "dialog-open", "dialog-save", "fs-read-file", "fs-create-dir", "fs-remove-dir", "fs-rename-file", "fs-remove-file", "fs-read-dir", "fs-write-file", "fs-copy-file", "fs-exists", "shell-open"] }
+# tauri-plugin-opener = "1"
+# tauri-plugin-dialog = "1"
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -108,4 +108,3 @@ strip = true
 
 # Enable incremental compilation for faster builds (trade-off with size)
 incremental = false
-

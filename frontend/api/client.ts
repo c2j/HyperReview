@@ -54,11 +54,8 @@ import {
 import { useMemo } from 'react';
 
 // Tauri IPC window interface extension
-declare global {
-  interface Window {
-    __TAURI__: any;
-  }
-}
+// This extends the window object to include the Tauri API
+// The actual types are provided by @tauri-apps/api
 
 // ============================================================================
 // Custom Hook: useApiClient
