@@ -1,17 +1,21 @@
-import { invoke } from '@tauri-apps/api/core';
-import { useCallback } from 'react';
+import { invoke } from "@tauri-apps/api/tauri";
+import { open } from "@tauri-apps/api/dialog";
+import { useCallback } from "react";
 
 // Generic IPC hook
 function useIPC<T, R>(command: string) {
-  const call = useCallback(async (args?: T): Promise<R> => {
-    try {
-      const result = await invoke<R>(command, (args as any) || {});
-      return result;
-    } catch (error) {
-      console.error(`IPC call failed for ${command}:`, error);
-      throw error;
-    }
-  }, [command]);
+  const call = useCallback(
+    async (args?: T): Promise<R> => {
+      try {
+        const result = await invoke<R>(command, (args as any) || {});
+        return result;
+      } catch (error) {
+        console.error(`IPC call failed for ${command}:`, error);
+        throw error;
+      }
+    },
+    [command],
+  );
 
   return call;
 }
@@ -20,122 +24,135 @@ function useIPC<T, R>(command: string) {
 export const useOpenRepoDialog = () => {
   return useCallback(async (): Promise<string | null> => {
     try {
-      // In Tauri v2, use invoke to call the backend dialog command
-      // The backend will use the OS native dialog
-      const result = await invoke<string | null>('open_repo_dialog_frontend');
-      return result;
+      // In Tauri v1, use the frontend dialog API to select a folder
+      const selected = await open({
+        directory: true,
+        multiple: false
+      });
+
+      if (Array.isArray(selected)) {
+        // If multiple files were selected (shouldn't happen with directory: true)
+        return selected[0] || null;
+      }
+
+      // selected is a single string path or null
+      return selected;
     } catch (error) {
-      console.error('Failed to open repository dialog:', error);
+      console.error("Failed to open repository dialog:", error);
       throw error;
     }
   }, []);
 };
 
 export const useGetRecentRepos = () => {
-  return useIPC<[], any[]>('get_recent_repos');
+  return useIPC<[], any[]>("get_recent_repos");
 };
 
 export const useGetBranches = () => {
-  return useIPC<[], any[]>('get_branches');
+  return useIPC<[], any[]>("get_branches");
 };
 
 export const useLoadRepo = () => {
-  return useIPC<{ path: string }, any>('load_repo');
+  return useIPC<{ path: string }, any>("load_repo");
 };
 
 // Diff and comment hooks
 export const useGetFileDiff = () => {
-  return useIPC<{ params: { file_path: string; old_commit?: string; new_commit?: string } }, any[]>(
-    'get_file_diff'
-  );
+  return useIPC<
+    { params: { file_path: string; old_commit?: string; new_commit?: string } },
+    any[]
+  >("get_file_diff");
 };
 
 export const useAddComment = () => {
-  return useIPC<{ params: { file_path: string; line_number: number; content: string } }, any>(
-    'add_comment'
-  );
+  return useIPC<
+    { params: { file_path: string; line_number: number; content: string } },
+    any
+  >("add_comment");
 };
 
 export const useUpdateComment = () => {
-  return useIPC<{ params: { comment_id: string; content: string } }, any>('update_comment');
+  return useIPC<{ params: { comment_id: string; content: string } }, any>(
+    "update_comment",
+  );
 };
 
 export const useDeleteComment = () => {
-  return useIPC<{ comment_id: string }, boolean>('delete_comment');
+  return useIPC<{ comment_id: string }, boolean>("delete_comment");
 };
 
 export const useGetComments = () => {
-  return useIPC<{ file_path: string }, any[]>('get_comments');
+  return useIPC<{ file_path: string }, any[]>("get_comments");
 };
 
 // Task management hooks
 export const useGetTasks = () => {
-  return useIPC<[], any[]>('get_tasks');
+  return useIPC<[], any[]>("get_tasks");
 };
 
 export const useGetReviewStats = () => {
-  return useIPC<[], any>('get_review_stats');
+  return useIPC<[], any>("get_review_stats");
 };
 
 export const useGetQualityGates = () => {
-  return useIPC<[], any[]>('get_quality_gates');
+  return useIPC<[], any[]>("get_quality_gates");
 };
 
 export const useGetReviewTemplates = () => {
-  return useIPC<[], any[]>('get_review_templates');
+  return useIPC<[], any[]>("get_review_templates");
 };
 
 export const useCreateTemplate = () => {
-  return useIPC<{ name: string; content: string }, any>('create_template');
+  return useIPC<{ name: string; content: string }, any>("create_template");
 };
 
 // Analysis hooks
 export const useGetHeatmap = () => {
-  return useIPC<[], any[]>('get_heatmap');
+  return useIPC<[], any[]>("get_heatmap");
 };
 
 export const useGetChecklist = () => {
-  return useIPC<{ file_path: string }, any[]>('get_checklist');
+  return useIPC<{ file_path: string }, any[]>("get_checklist");
 };
 
 export const useGetBlame = () => {
-  return useIPC<{ file_path: string; commit?: string }, any>('get_blame');
+  return useIPC<{ file_path: string; commit?: string }, any>("get_blame");
 };
 
 export const useReadFileContent = () => {
-  return useIPC<{ params: { file_path: string } }, string>('read_file_content');
+  return useIPC<{ params: { file_path: string } }, string>("read_file_content");
 };
 
 export const useAnalyzeComplexity = () => {
-  return useIPC<{ file_path: string }, any>('analyze_complexity');
+  return useIPC<{ file_path: string }, any>("analyze_complexity");
 };
 
 export const useScanSecurity = () => {
-  return useIPC<{ file_path: string }, any[]>('scan_security');
+  return useIPC<{ file_path: string }, any[]>("scan_security");
 };
 
 // External integration hooks
 export const useSubmitReview = () => {
-  return useIPC<{ system: string; review_data: any }, any>('submit_review');
+  return useIPC<{ system: string; review_data: any }, any>("submit_review");
 };
 
 export const useSyncRepo = () => {
-  return useIPC<[], any>('sync_repo');
+  return useIPC<[], any>("sync_repo");
 };
 
 // Search and configuration hooks
 export const useSearch = () => {
-  return useIPC<{ query: string }, any[]>('search');
+  return useIPC<{ query: string }, any[]>("search");
 };
 
 export const useGetCommands = () => {
-  return useIPC<[], any[]>('get_commands');
+  return useIPC<[], any[]>("get_commands");
 };
 
 export const useGetTags = () => {
-  return useIPC<[], any[]>('get_tags');
+  return useIPC<[], any[]>("get_tags");
 };
 
 export const useCreateTag = () => {
-  return useIPC<{ label: string; color: string }, any>('create_tag');
+  return useIPC<{ label: string; color: string }, any>("create_tag");
 };

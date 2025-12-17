@@ -1,15 +1,50 @@
 {
-  "$schema": "https://schema.tauri.app/config/2",
-  "productName": "hyperreview",
-  "version": "0.1.0",
-  "identifier": "com.c2j.hyperreview",
-  "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+  "$schema": "https://schema.tauri.app/config/1",
+  "package": {
+    "productName": "hyperreview",
+    "version": "0.1.0"
   },
-  "app": {
+
+  "tauri": {
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.c2j.hyperreview",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "publisher": "C2J",
+      "copyright": "Copyright © 2025 C2J. All rights reserved.",
+      "category": "DeveloperTool",
+      "shortDescription": "Advanced code review tool for Git repositories",
+      "longDescription": "HyperReview is a powerful desktop application for conducting thorough code reviews of Git repositories. It provides advanced diff viewing, comment management, task tracking, and analytics."
+    },
+    "allowlist": {
+      "shell": {
+        "open": true
+      },
+      "dialog": {
+        "open": true,
+        "save": true
+      },
+      "fs": {
+        "readFile": true,
+        "writeFile": true,
+        "readDir": true,
+        "copyFile": true,
+        "createDir": true,
+        "removeDir": true,
+        "removeFile": true,
+        "renameFile": true,
+        "exists": true,
+
+        "scope": ["**"]
+      }
+    },
     "windows": [
       {
         "title": "HyperReview",
@@ -23,6 +58,7 @@
         "decorations": true,
         "alwaysOnTop": false,
         "skipTaskbar": false,
+        "url": "http://localhost:1420",
         "visible": true
       }
     ],
@@ -30,43 +66,9 @@
       "csp": null
     }
   },
-  "bundle": {
-    "active": true,
-    "targets": "all",
-    "publisher": "C2J",
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "copyright": "Copyright © 2025 C2J. All rights reserved.",
-    "category": "DeveloperTool",
-    "shortDescription": "Advanced code review tool for Git repositories",
-    "longDescription": "HyperReview is a powerful desktop application for conducting thorough code reviews of Git repositories. It provides advanced diff viewing, comment management, task tracking, and analytics."
-  },
-  "plugins": {
-    "shell": {
-      "all": false,
-      "open": true
-    },
-    "fs": {
-      "all": false,
-      "readFile": true,
-      "writeFile": true,
-      "readDir": true,
-      "copyFile": true,
-      "createDir": true,
-      "removeDir": true,
-      "removeFile": true,
-      "renameFile": true,
-      "exists": true,
-      "metadata": true,
-      "watch": {
-        "timeout": 3000
-      },
-      "scope": ["**"]
-    }
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devPath": "http://localhost:1420",
+    "beforeBuildCommand": "npm run build"
   }
 }
