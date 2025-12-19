@@ -14,14 +14,17 @@
     "compress:binaries": "find src-tauri/target/release/bundle -name 'hyperreview*' -type f -exec upx --best {} \\; 2>/dev/null || echo 'UPX not installed, skipping compression'"
   },
   "dependencies": {
+    "@tailwindcss/postcss": "^4.1.18",
     "@tauri-apps/api": "^1.6.0",
     "@tauri-apps/plugin-opener": "^1",
     "@types/react-window": "^2.0.0",
     "lucide-react": "^0.561.0",
+    "postcss": "^8.5.6",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-window": "^2.2.3",
     "react-window-infinite-loader": "^2.0.0",
+    "tailwindcss": "^4.1.18",
     "zustand": "^5.0.9"
   },
   "devDependencies": {

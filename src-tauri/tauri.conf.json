@@ -58,7 +58,7 @@
         "decorations": true,
         "alwaysOnTop": false,
         "skipTaskbar": false,
-        "url": "http://localhost:1420",
+        "url": "index.html",
         "visible": true
       }
     ],

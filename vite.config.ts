@@ -8,6 +8,9 @@ const host = process.env.TAURI_DEV_HOST;
 // https://vite.dev/config/
 export default defineConfig(async () => ({
   plugins: [react()],
+  css: {
+    postcss: "./postcss.config.mjs", // 强制指定配置文件
+  },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`
   //
@@ -45,20 +48,20 @@ export default defineConfig(async () => ({
         // Manual chunks for better caching
         manualChunks: {
           // Vendor libraries
-          'vendor-react': ['react', 'react-dom'],
-          'vendor-ui': ['lucide-react'],
-          'vendor-utils': ['zustand'],
+          "vendor-react": ["react", "react-dom"],
+          "vendor-ui": ["lucide-react"],
+          "vendor-utils": ["zustand"],
         },
 
         // Improve chunk naming
-        chunkFileNames: 'assets/[name]-[hash].js',
-        entryFileNames: 'assets/[name]-[hash].js',
-        assetFileNames: 'assets/[name]-[hash].[ext]',
+        chunkFileNames: "assets/[name]-[hash].js",
+        entryFileNames: "assets/[name]-[hash].js",
+        assetFileNames: "assets/[name]-[hash].[ext]",
       },
     },
 
     // Minification with esbuild (faster than terser)
-    minify: 'esbuild',
+    minify: "esbuild",
     // Note: To use terser for more aggressive minification, install it: npm install -D terser
     // minify: 'terser',
     // terserOptions: {
@@ -73,23 +76,18 @@ export default defineConfig(async () => ({
   // Resolve configuration
   resolve: {
     alias: {
-      '@': resolve(__dirname, './frontend'),
-      '@components': resolve(__dirname, './frontend/components'),
-      '@api': resolve(__dirname, './frontend/api'),
-      '@hooks': resolve(__dirname, './frontend/hooks'),
-      '@utils': resolve(__dirname, './frontend/utils'),
-      '@types': resolve(__dirname, './frontend/types'),
-      '@store': resolve(__dirname, './frontend/store'),
+      "@": resolve(__dirname, "./frontend"),
+      "@components": resolve(__dirname, "./frontend/components"),
+      "@api": resolve(__dirname, "./frontend/api"),
+      "@hooks": resolve(__dirname, "./frontend/hooks"),
+      "@utils": resolve(__dirname, "./frontend/utils"),
+      "@types": resolve(__dirname, "./frontend/types"),
+      "@store": resolve(__dirname, "./frontend/store"),
     },
   },
 
   // Optimize dependencies
   optimizeDeps: {
-    include: [
-      'react',
-      'react-dom',
-      'lucide-react',
-      'zustand',
-    ],
+    include: ["react", "react-dom", "lucide-react", "zustand"],
   },
 }));
