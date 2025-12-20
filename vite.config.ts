@@ -9,7 +9,7 @@ const host = process.env.TAURI_DEV_HOST;
 export default defineConfig(async () => ({
   plugins: [react()],
   css: {
-    postcss: "./postcss.config.mjs", // 强制指定配置文件
+    //postcss: "./postcss.config.js", // 强制指定配置文件
   },
 
   // Vite options tailored for Tauri development and only applied in `tauri dev` or `tauri build`

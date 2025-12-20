@@ -1,6 +1,8 @@
-@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
 
-@theme {
+:root {
     /* 定义颜色 (editor 开头的变量会自动映射为 editor-* 组) */
     --color-editor-bg: #1e1e1e;
     --color-editor-fg: #cccccc;
