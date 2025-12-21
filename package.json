@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^1.6.0",
-    "@tauri-apps/plugin-opener": "^2",
+    "@tauri-apps/plugin-opener": "^1",
     "@types/react-window": "^2.0.0",
     "lucide-react": "^0.561.0",
     "react": "^19.2.3",
@@ -30,7 +30,15 @@
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
     "@vitejs/plugin-react": "^5.0.0",
+    "autoprefixer": "^10.4.23",
+    "postcss": "^8.5.6",
+    "postcss-color-functional-notation": "^7.0.12",
+    "postcss-preset-env": "^10.5.0",
+    "tailwindcss": "3.4",
     "typescript": "~5.8.2",
     "vite": "^6.2.0"
-  }
+  },
+  "browserslist": [
+    "chrome 86"
+  ]
 }

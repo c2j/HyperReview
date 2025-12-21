@@ -58,17 +58,25 @@
         "decorations": true,
         "alwaysOnTop": false,
         "skipTaskbar": false,
-        "url": "http://localhost:1420",
+        "url": "index.html",
         "visible": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": null,
+      "dangerousRemoteDomainIpcAccess": [
+        {
+          "domain": "localhost",
+          "windows": ["main"],
+          "plugins": []
+        }
+      ]
     }
   },
   "build": {
     "beforeDevCommand": "npm run dev",
     "devPath": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build"
+    "beforeBuildCommand": "npm run build",
+    "distDir": "../dist"
   }
 }

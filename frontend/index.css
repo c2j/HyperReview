@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+    /* 定义颜色 (editor 开头的变量会自动映射为 editor-* 组) */
+    --color-editor-bg: #1e1e1e;
+    --color-editor-fg: #cccccc;
+    --color-editor-line: #2d2d2d;
+    --color-editor-selection: #264f78;
+    --color-editor-sidebar: #252526;
+    --color-editor-accent: #007acc;
+    --color-editor-error: #f14c4c;
+    --color-editor-warning: #ff8800;
+    --color-editor-info: #409eff;
+    --color-editor-success: #5cc46b;
+    --color-editor-modified: #e2c08d;
+
+    /* 定义字体 */
+    --font-mono:
+        "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+        "Liberation Mono", "Courier New", monospace;
+}
+
+/* 强制修复 Chrome 86 不认识 rgb(R G B / A) 的问题 */
+.bg-editor-bg {
+    background-color: rgb(30, 30, 30) !important;
+}
+.bg-editor-sidebar {
+    background-color: rgb(37, 37, 38) !important;
+}
+.border-editor-line {
+    border-color: rgb(45, 45, 45) !important;
+}
