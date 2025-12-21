@@ -21,3 +21,14 @@
         "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
         "Liberation Mono", "Courier New", monospace;
 }
+
+/* 强制修复 Chrome 86 不认识 rgb(R G B / A) 的问题 */
+.bg-editor-bg {
+    background-color: rgb(30, 30, 30) !important;
+}
+.bg-editor-sidebar {
+    background-color: rgb(37, 37, 38) !important;
+}
+.border-editor-line {
+    border-color: rgb(45, 45, 45) !important;
+}
