@@ -1,4 +1,5 @@
-import React, { useState, useCallback, useEffect } from 'react';
+
+import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import TitleBar from './components/TitleBar';
 import ToolBar from './components/ToolBar';
 import TaskTree from './components/TaskTree';
@@ -8,65 +9,40 @@ import ActionBar from './components/ActionBar';
 import StatusBar from './components/StatusBar';
 import Modal from './components/Modal';
 import OpenRepoModal from './components/OpenRepoModal';
-import ImportTaskModal from './components/ImportTaskModal';
+import NewTaskModal from './components/NewTaskModal';
 import CommandPalette from './components/CommandPalette';
 import SettingsModal from './components/SettingsModal';
 import ReviewActionModal, { ReviewType } from './components/ReviewActionModal';
 import SubmitReviewModal from './components/SubmitReviewModal';
-import CreateTaskModal from './components/CreateTaskModal';
 import TagManagerModal from './components/TagManagerModal';
 import SyncStatusModal from './components/SyncStatusModal';
 import BranchCompareModal from './components/BranchCompareModal';
 import TourGuide from './components/TourGuide';
-
-// New repository components
-import RepositorySelector from './components/RepositorySelector';
-
-// Error handling and loading
-import ToastContainer from './components/ToastContainer';
-import ErrorBoundary from './components/ErrorBoundary';
-import { LoadingProvider } from './context/LoadingContext';
-
-// Repository hooks
-import { useRepositoryActions } from './hooks/useRepository';
-import { useRepositoryStatus } from './hooks/useRepository';
-
-// Toast notifications
-import { showSuccess } from './utils/errorHandler';
-
-// Types
-import type { Repository } from './api/types';
+import { useTranslation } from './i18n';
+import { useApiClient } from './api/client';
 
 const App: React.FC = () => {
+  const { t } = useTranslation();
+  const apiClient = useApiClient();
   const [activeTaskId, setActiveTaskId] = useState('1');
+  const [notification, setNotification] = useState<string | null>(null);
 
-  // Repository state using hooks
-  const {
-    currentBranch,
-    openRepository
-  } = useRepositoryActions();
-
-  const { isRepoLoaded } = useRepositoryStatus();
-
-  // Diff context state
+  // Repository & Diff Context State
+  const [isRepoLoaded, setIsRepoLoaded] = useState(false);
+  const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
+  const [repoRefreshKey, setRepoRefreshKey] = useState(0); // 用于触发数据刷新
   const [diffContext, setDiffContext] = useState({
-    base: currentBranch?.name || 'main',
-    head: currentBranch?.name || 'main'
+      base: 'master',
+      head: 'feature/payment-retry'
   });
 
-  // Selected file state
+  // Current File Context
+  const [activeFilePath, setActiveFilePath] = useState('src/main/OrderService.java');
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-
-  // Update diff context when current branch changes
-  useEffect(() => {
-    if (currentBranch) {
-      setDiffContext(prev => ({
-        ...prev,
-        base: prev.base || currentBranch.name,
-        head: currentBranch.name
-      }));
-    }
-  }, [currentBranch]);
+  const activeFileExtension = useMemo(() => {
+    const parts = activeFilePath.split('.');
+    return parts.length > 1 ? `.${parts.pop()}` : '';
+  }, [activeFilePath]);
 
   // Layout State
   const [leftWidth, setLeftWidth] = useState(260);
@@ -77,13 +53,13 @@ const App: React.FC = () => {
 
   // Modal States
   const [openRepoModalOpen, setOpenRepoModalOpen] = useState(false);
-  const [repositorySelectorOpen, setRepositorySelectorOpen] = useState(false);
-  const [importTaskModalOpen, setImportTaskModalOpen] = useState(false);
+  const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
+  const [newTaskInitialTab, setNewTaskInitialTab] = useState<'import' | 'create'>('import');
+
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [submitOpen, setSubmitOpen] = useState(false);
-  const [reviewModal, setReviewModal] = useState<{isOpen: boolean, type: ReviewType}>({isOpen: false, type: 'comment'});
-  const [createTaskModalOpen, setCreateTaskModalOpen] = useState(false);
+  const [reviewModal, setReviewModal] = useState<{isOpen: boolean, type: ReviewType, taskId?: string, fileId?: string, filePath?: string, lineNumber?: number}>({isOpen: false, type: 'comment'});
   const [tagManagerModalOpen, setTagManagerModalOpen] = useState(false);
   const [syncStatusModalOpen, setSyncStatusModalOpen] = useState(false);
   const [branchCompareModalOpen, setBranchCompareModalOpen] = useState(false);
@@ -94,9 +70,8 @@ const App: React.FC = () => {
 
   // Initial Load Effect
   useEffect(() => {
-    // If no repo is loaded on startup, show repository selector
     if (!isRepoLoaded) {
-      const timer = setTimeout(() => setRepositorySelectorOpen(true), 100);
+      const timer = setTimeout(() => setOpenRepoModalOpen(true), 100);
       return () => clearTimeout(timer);
     }
   }, [isRepoLoaded]);
@@ -106,111 +81,103 @@ const App: React.FC = () => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!isResizing) return;
       e.preventDefault();
-
       if (isResizing === 'left') {
         const newWidth = e.clientX;
-        if (newWidth >= 150 && newWidth <= 600) {
-          setLeftWidth(newWidth);
-        }
+        if (newWidth >= 150 && newWidth <= 600) setLeftWidth(newWidth);
       } else if (isResizing === 'right') {
         const newWidth = window.innerWidth - e.clientX;
-        if (newWidth >= 200 && newWidth <= 800) {
-          setRightWidth(newWidth);
-        }
+        if (newWidth >= 200 && newWidth <= 800) setRightWidth(newWidth);
       }
     };
-
     const handleMouseUp = () => {
       setIsResizing(null);
       document.body.style.cursor = 'default';
-      // Re-enable selection
       document.body.style.userSelect = 'auto';
     };
-
     if (isResizing) {
       document.addEventListener('mousemove', handleMouseMove);
       document.addEventListener('mouseup', handleMouseUp);
       document.body.style.cursor = 'col-resize';
       document.body.style.userSelect = 'none';
     }
-
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = 'default';
-      document.body.style.userSelect = 'auto';
     };
   }, [isResizing]);
 
   const toggleLeft = useCallback(() => setShowLeft(prev => !prev), []);
   const toggleRight = useCallback(() => setShowRight(prev => !prev), []);
-
-  // Derived maximize state: if both panels are hidden, we are maximized
   const isMaximized = !showLeft && !showRight;
 
   const toggleMaximize = useCallback(() => {
     if (isMaximized) {
-      // Restore both (or just defaults)
       setShowLeft(true);
       setShowRight(true);
     } else {
-      // Maximize
       setShowLeft(false);
       setShowRight(false);
     }
   }, [isMaximized]);
 
-  // Notification handler (legacy - using toast system now)
   const showNotification = useCallback((message: string) => {
-    // Use toast notification instead
-    console.log('Notification:', message);
+    setNotification(message);
+    const timer = setTimeout(() => setNotification(null), 2000);
+    return () => clearTimeout(timer);
   }, []);
 
-  // --- Repository Event Handlers ---
+  const handleOpenRepo = (path: string) => {
+    setSelectedRepoPath(path);
+    setOpenRepoModalOpen(false);
+    setIsInitialSetup(true);
+    setBranchCompareModalOpen(true);
+    // 仓库路径已设置，BranchCompareModal 会自动加载仓库并获取分支
+  };
 
-  // Handle repository selection from RepositorySelector
-  const handleRepositorySelected = useCallback((repository: Repository) => {
-    const repoName = repository.path.split('/').pop() || repository.path;
-    showSuccess(`Repository loaded: ${repoName}`);
-    setRepositorySelectorOpen(false);
-    setIsInitialSetup(false);
-  }, []);
-
-  // Handle opening new repository
-  const handleOpenRepo = useCallback(async () => {
-    const repository = await openRepository();
-    if (repository) {
-      handleRepositorySelected(repository);
-    }
-  }, [openRepository, handleRepositorySelected]);
-
-  // --- Handlers for Open Repo Wizard (Legacy) ---
-
-  // Back from Step 2 -> Step 1
   const handleBackToRepoSelection = () => {
-    setBranchCompareModalOpen(false);
-    setTimeout(() => setRepositorySelectorOpen(true), 50);
+      setBranchCompareModalOpen(false);
+      setTimeout(() => setOpenRepoModalOpen(true), 50);
   };
 
-  // Step 2: Select Branches -> Load UI
   const handleApplyBranchCompare = (base: string, head: string) => {
-    setDiffContext({ base, head });
-
-    if (isInitialSetup) {
-      setIsInitialSetup(false);
-      showSuccess(`Repository configured: ${base} ← ${head}`);
-    } else {
-      showSuccess(`Comparing ${base} ← ${head}`);
-    }
-
-    setBranchCompareModalOpen(false);
+      setDiffContext({ base, head });
+      if (isInitialSetup) {
+          setIsRepoLoaded(true);
+          setIsInitialSetup(false);
+          showNotification(`Repository Loaded: ${selectedRepoPath} (${base} ← ${head})`);
+      } else {
+          showNotification(`Comparing ${base} ← ${head}`);
+      }
+      // 重置当前文件为默认值，避免显示不存在的文件
+      setActiveFilePath('src/main/OrderService.java');
+      // 刷新所有相关数据
+      setRepoRefreshKey(prev => prev + 1);
+      setBranchCompareModalOpen(false);
   };
 
-  // --- Other Handlers ---
+  const handleNewTask = (tab: 'import' | 'create' = 'import') => {
+    setNewTaskInitialTab(tab);
+    setNewTaskModalOpen(true);
+  };
 
   const handleImportTask = (id: string) => {
     showNotification(`Task imported: ${id}`);
-    setImportTaskModalOpen(false);
+    setNewTaskModalOpen(false);
+  };
+
+  const handleCreateTask = async (task: { title: string; type: string; files: string[] }) => {
+    try {
+      // 调用后端 API 创建本地任务
+      await apiClient.createLocalTask(task.title, task.type, task.files);
+      showNotification(`Task created: ${task.title} (${task.type}) with ${task.files.length} files`);
+      setNewTaskModalOpen(false);
+
+      // 刷新本地任务列表
+      setRepoRefreshKey(prev => prev + 1);
+    } catch (error) {
+      console.error('Failed to create local task:', error);
+      showNotification(`Failed to create task: ${error}`);
+    }
   };
 
   const handleNavigate = (target: string) => {
@@ -218,8 +185,24 @@ const App: React.FC = () => {
     setSearchOpen(false);
   };
 
-  const handleReviewSubmit = (text: string, type: ReviewType) => {
-    showNotification(`${type.toUpperCase()} posted: ${text.substring(0, 20)}...`);
+  const handleReviewSubmit = async (text: string, type: ReviewType, taskId?: string, fileId?: string) => {
+    // If taskId and fileId are provided, this is a file review action from TaskTree
+    if (taskId && fileId) {
+      try {
+        // Map 'approved' to 'approved', 'reject' to 'must_change'
+        const reviewStatus = type === 'reject' ? 'must_change' : type as 'approved' | 'concern' | 'question';
+        await apiClient.updateFileReviewStatus(taskId, fileId, reviewStatus, text || undefined, 'Reviewer');
+        showNotification(`文件审核状态已更新: ${type === 'approved' ? '通过' : type === 'concern' ? '关注' : type === 'reject' ? '必须修改' : '提问'}`);
+        // Trigger a refresh of local tasks
+        setRepoRefreshKey(prev => prev + 1);
+      } catch (error) {
+        console.error('[handleReviewSubmit] Failed to update file review status:', error);
+        showNotification('更新失败，请重试');
+      }
+    } else {
+      // Regular review comment (for ActionBar)
+      showNotification(`${type.toUpperCase()} posted: ${text.substring(0, 20)}...`);
+    }
     setReviewModal({ ...reviewModal, isOpen: false });
   };
 
@@ -228,23 +211,8 @@ const App: React.FC = () => {
     setSubmitOpen(false);
   };
 
-  const handleCreateTask = (task: { title: string; type: string }) => {
-    showNotification(`Task created: ${task.title} (${task.type})`);
-    setCreateTaskModalOpen(false);
-  };
-
-  // Generalized Action Handler
   const handleAction = (msg: string) => {
-    console.log('handleAction received:', msg);
-
-    // Handle file selection from heatmap
-    if (msg.startsWith("FILE_SELECTED:")) {
-      const filePath = msg.substring(14); // Remove "FILE_SELECTED:" prefix
-      console.log('Setting selected file:', filePath);
-      setSelectedFile(filePath);
-      return;
-    }
-
+    console.log('[handleAction] Received action:', msg);
     if (msg === "Global Search Activated") { setSearchOpen(true); return; }
     if (msg === "Settings Opened") { setSettingsOpen(true); return; }
     if (msg === "Concern Marked") { setReviewModal({ isOpen: true, type: 'concern' }); return; }
@@ -252,13 +220,48 @@ const App: React.FC = () => {
     if (msg === "Question Mode Activated") { setReviewModal({ isOpen: true, type: 'question' }); return; }
     if (msg === "Comment Box Opened") { setReviewModal({ isOpen: true, type: 'comment' }); return; }
     if (msg.includes("Submitting Review")) { setSubmitOpen(true); return; }
-    if (msg === "Creating Local Task...") { setCreateTaskModalOpen(true); return; }
+
+    // File review actions from TaskTree
+    if (msg.includes("FileReviewAction:")) {
+      const parts = msg.replace("FileReviewAction:", "").split(":");
+      if (parts.length >= 4) {
+        const [type, taskId, fileId, filePath] = parts;
+        setReviewModal({
+          isOpen: true,
+          type: type as ReviewType,
+          taskId,
+          fileId,
+          filePath
+        });
+        return;
+      }
+    }
+
+    if (msg.includes("File selected: ")) {
+      const filePath = msg.replace("File selected: ", "");
+      setActiveFilePath(filePath);
+      setSelectedFile(filePath);
+      return;
+    }
+    if (msg.includes("Opening Diff: ")) {
+      const filePath = msg.replace("Opening Diff: ", "");
+      setActiveFilePath(filePath);
+      setSelectedFile(filePath);
+      return;
+    }
+    if (msg === "Creating Local Task...") { handleNewTask('create'); return; }
+    if (msg === "Opening New Task Modal...") { handleNewTask('import'); return; }
+    if (msg === "Importing Task...") { handleNewTask('import'); return; }
     if (msg === "Opening Tag Manager...") { setTagManagerModalOpen(true); return; }
     if (msg === "Syncing with Remote...") { setSyncStatusModalOpen(true); return; }
     if (msg === "Start Tour") { setTourOpen(true); return; }
-    if (msg === "Opening Repository...") { setRepositorySelectorOpen(true); return; }
-    if (msg === "Switching Branch...") { setIsInitialSetup(false); setBranchCompareModalOpen(true); return; }
-
+    if (msg === "Switching Branch...") {
+      console.log('[handleAction] Opening branch compare modal, isRepoLoaded:', isRepoLoaded);
+      setIsInitialSetup(false);
+      setBranchCompareModalOpen(true);
+      console.log('[handleAction] branchCompareModalOpen set to true');
+      return;
+    }
     showNotification(msg);
   };
 
@@ -267,120 +270,86 @@ const App: React.FC = () => {
       <TitleBar onAction={handleAction} />
       <ToolBar
         onAction={handleAction}
-        onOpenRepo={() => setRepositorySelectorOpen(true)}
-        onImportTask={() => setImportTaskModalOpen(true)}
+        onOpenRepo={() => setOpenRepoModalOpen(true)}
+        onNewTask={() => handleNewTask('import')}
         showLeft={showLeft}
         showRight={showRight}
         onToggleLeft={toggleLeft}
         onToggleRight={toggleRight}
         diffContext={diffContext}
       />
-      
-      {/* Resizable Split Pane Area */}
-      <div className="flex-1 flex overflow-hidden relative pb-[28px]"> 
-        
-        {/* Left Pane (Task Tree) */}
+
+      <div className="flex-1 flex overflow-hidden relative pb-[28px]">
         {showLeft && (
-          <div 
-            style={{ width: leftWidth }} 
-            className={`shrink-0 h-full flex flex-col ${isResizing ? '' : 'transition-all duration-300 ease-in-out'}`}
-          >
-            <TaskTree 
-              activeTaskId={activeTaskId} 
-              onSelectTask={setActiveTaskId} 
-              onAction={handleAction}
-            />
+          <div style={{ width: leftWidth }} className={`shrink-0 h-full flex flex-col ${isResizing ? '' : 'transition-all duration-300 ease-in-out'}`}>
+            <TaskTree activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} onAction={handleAction} repoRefreshKey={repoRefreshKey} onSelectFile={setSelectedFile} diffContext={diffContext} />
           </div>
         )}
 
-        {/* Left Resizer */}
         {showLeft && (
-          <div 
-            className="w-[1px] hover:w-[4px] bg-editor-line hover:bg-editor-accent cursor-col-resize z-20 relative -ml-[1px] hover:-ml-[2px] transition-all duration-100 delay-100 flex items-center justify-center group"
-            onMouseDown={() => setIsResizing('left')}
-          >
-          </div>
+          <div className="w-[1px] hover:w-[4px] bg-editor-line hover:bg-editor-accent cursor-col-resize z-20 relative -ml-[1px] hover:-ml-[2px] transition-all duration-100 delay-100 flex items-center justify-center group" onMouseDown={() => setIsResizing('left')} />
         )}
 
-        {/* Center Pane (Diff View) */}
         <div className="flex-1 min-w-0 h-full border-r border-editor-line relative pb-[56px] flex flex-col">
-          <DiffView
-            isMaximized={isMaximized}
-            toggleMaximize={toggleMaximize}
-            onAction={handleAction}
-            diffContext={diffContext}
-            selectedFile={selectedFile}
-          />
+          <DiffView isMaximized={isMaximized} toggleMaximize={toggleMaximize} onAction={handleAction} diffContext={diffContext} selectedFile={selectedFile} activeFilePath={activeFilePath} />
           <ActionBar onAction={handleAction} />
         </div>
 
-        {/* Right Resizer */}
         {showRight && (
-          <div 
-             className="w-[1px] hover:w-[4px] bg-editor-line hover:bg-editor-accent cursor-col-resize z-20 relative -mr-[1px] hover:-mr-[2px] transition-all duration-100 delay-100 flex items-center justify-center group"
-             onMouseDown={() => setIsResizing('right')}
-          >
-          </div>
+          <div className="w-[1px] hover:w-[4px] bg-editor-line hover:bg-editor-accent cursor-col-resize z-20 relative -mr-[1px] hover:-mr-[2px] transition-all duration-100 delay-100 flex items-center justify-center group" onMouseDown={() => setIsResizing('right')} />
         )}
 
-        {/* Right Pane (Tabs) */}
         {showRight && (
-          <div 
-            style={{ width: rightWidth }} 
-            className={`shrink-0 h-full flex flex-col ${isResizing ? '' : 'transition-all duration-300 ease-in-out'}`}
-          >
-            <RightPanel onAction={handleAction} />
+          <div style={{ width: rightWidth }} className={`shrink-0 h-full flex flex-col ${isResizing ? '' : 'transition-all duration-300 ease-in-out'}`}>
+            <RightPanel onAction={handleAction} activeFileExtension={activeFileExtension} repoRefreshKey={repoRefreshKey} onSelectFile={setSelectedFile} />
           </div>
         )}
       </div>
 
-      {/* Status Bar */}
       <div className="absolute bottom-0 w-full z-50">
          <StatusBar />
       </div>
 
-      {/* --- MODALS --- */}
-      <Modal isOpen={repositorySelectorOpen} onClose={() => setRepositorySelectorOpen(false)} title="Select Repository">
-        <RepositorySelector onRepositorySelected={handleRepositorySelected} />
-      </Modal>
-
-      <Modal isOpen={openRepoModalOpen} onClose={() => { if(isRepoLoaded) setOpenRepoModalOpen(false); }} title="Open Repository">
+      <Modal isOpen={openRepoModalOpen} onClose={() => { if(isRepoLoaded) setOpenRepoModalOpen(false); }} title={t('modal.open_repo.step1')}>
         <OpenRepoModal onClose={() => { if(isRepoLoaded) setOpenRepoModalOpen(false); }} onOpen={handleOpenRepo} />
       </Modal>
 
-      <Modal isOpen={importTaskModalOpen} onClose={() => setImportTaskModalOpen(false)} title="Import Task">
-        <ImportTaskModal onClose={() => setImportTaskModalOpen(false)} onImport={handleImportTask} />
+      <Modal isOpen={newTaskModalOpen} onClose={() => setNewTaskModalOpen(false)} title={t('modal.new_task.title')}>
+        <NewTaskModal onClose={() => setNewTaskModalOpen(false)} onImport={handleImportTask} onCreate={handleCreateTask} initialTab={newTaskInitialTab} />
       </Modal>
 
       <Modal isOpen={searchOpen} onClose={() => setSearchOpen(false)} title="Go to File or Command">
         <CommandPalette onClose={() => setSearchOpen(false)} onNavigate={handleNavigate} />
       </Modal>
 
-      <Modal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} title="Editor Preferences">
+      <Modal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} title={t('modal.settings.title')}>
         <SettingsModal onClose={() => setSettingsOpen(false)} />
       </Modal>
 
       <Modal isOpen={reviewModal.isOpen} onClose={() => setReviewModal({ ...reviewModal, isOpen: false })} title="Add Review Comment">
-        <ReviewActionModal type={reviewModal.type} onClose={() => setReviewModal({ ...reviewModal, isOpen: false })} onSubmit={handleReviewSubmit} />
+        <ReviewActionModal
+          type={reviewModal.type}
+          taskId={reviewModal.taskId}
+          fileId={reviewModal.fileId}
+          filePath={reviewModal.filePath || activeFilePath}
+          onClose={() => setReviewModal({ ...reviewModal, isOpen: false })}
+          onSubmit={handleReviewSubmit}
+        />
       </Modal>
 
-      <Modal isOpen={submitOpen} onClose={() => setSubmitOpen(false)} title="Submit Review">
+      <Modal isOpen={submitOpen} onClose={() => setSubmitOpen(false)} title={t('modal.submit.title')}>
         <SubmitReviewModal onClose={() => setSubmitOpen(false)} onSubmit={handleFinalSubmit} />
       </Modal>
 
-      <Modal isOpen={createTaskModalOpen} onClose={() => setCreateTaskModalOpen(false)} title="Create Local Task">
-        <CreateTaskModal onClose={() => setCreateTaskModalOpen(false)} onCreate={handleCreateTask} />
-      </Modal>
-
-      <Modal isOpen={tagManagerModalOpen} onClose={() => setTagManagerModalOpen(false)} title="Manage Quick Tags">
+      <Modal isOpen={tagManagerModalOpen} onClose={() => setTagManagerModalOpen(false)} title={t('modal.tag_manager.title')}>
         <TagManagerModal onClose={() => setTagManagerModalOpen(false)} />
       </Modal>
 
-      <Modal isOpen={syncStatusModalOpen} onClose={() => setSyncStatusModalOpen(false)} title="Remote Sync Status">
+      <Modal isOpen={syncStatusModalOpen} onClose={() => setSyncStatusModalOpen(false)} title={t('modal.sync.title')}>
         <SyncStatusModal onClose={() => setSyncStatusModalOpen(false)} />
       </Modal>
 
-      <Modal isOpen={branchCompareModalOpen} onClose={() => { if(isRepoLoaded) setBranchCompareModalOpen(false); }} title="Branch Comparison">
+      <Modal isOpen={branchCompareModalOpen} onClose={() => { if(isRepoLoaded) setBranchCompareModalOpen(false); }} title={t('modal.branch_compare.title')}>
         <BranchCompareModal
           currentBase={diffContext.base}
           currentHead={diffContext.head}
@@ -388,27 +357,19 @@ const App: React.FC = () => {
           onClose={() => { if(isRepoLoaded) setBranchCompareModalOpen(false); }}
           onApply={handleApplyBranchCompare}
           onBack={handleBackToRepoSelection}
+          selectedRepoPath={selectedRepoPath || undefined}
         />
       </Modal>
 
-      {/* Tour Guide */}
       <TourGuide isOpen={tourOpen} onClose={() => setTourOpen(false)} />
 
-      {/* Toast Notifications */}
-      <ToastContainer />
+      {notification && (
+        <div className="absolute top-[100px] left-1/2 -translate-x-1/2 bg-editor-selection text-white px-4 py-2 rounded shadow-xl z-[150] animate-fade-in-down border border-editor-accent/50 text-xs font-bold tracking-wide pointer-events-none">
+          {notification}
+        </div>
+      )}
     </div>
   );
 };
 
-// Wrap App with LoadingProvider and ErrorBoundary
-const AppWithProviders: React.FC = () => {
-  return (
-    <ErrorBoundary>
-      <LoadingProvider>
-        <App />
-      </LoadingProvider>
-    </ErrorBoundary>
-  );
-};
-
-export default AppWithProviders;
+export default App;

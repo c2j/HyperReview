@@ -13,11 +13,12 @@ interface DiffViewProps {
   onAction?: (msg: string) => void;
   diffContext?: { base: string; head: string };
   selectedFile?: string | null;
+  activeFilePath?: string;
 }
 
 type ViewMode = 'diff' | 'old' | 'new';
 
-const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onAction, diffContext, selectedFile }) => {
+const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onAction, diffContext, selectedFile, activeFilePath: _activeFilePath }) => {
   const { t } = useTranslation();
   const { getFileDiff, getReviewTemplates, readFileContent } = useApiClient();
   const { isRepoLoaded } = useRepositoryStatus();
@@ -40,6 +41,11 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
   const [loading, setLoading] = useState(true);
   const [filePath, setFilePath] = useState('current-file'); // Default file path
   const [showFileContent, setShowFileContent] = useState(false); // Show file content when no diff
+  const [fileNotFoundInfo, setFileNotFoundInfo] = useState<{
+    exists: boolean;
+    message: string;
+    details?: string;
+  } | null>(null); // Friendly info for files that don't exist
 
   // View State
   const [viewMode, setViewMode] = useState<ViewMode>('diff');
@@ -66,28 +72,38 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
 
   // Update file path when selectedFile changes
   useEffect(() => {
-    console.log('DiffView: selectedFile changed to:', selectedFile);
+    console.log('[DiffView] selectedFile changed to:', selectedFile);
+    console.log('[DiffView] Current filePath before update:', filePath);
     if (selectedFile) {
+      console.log('[DiffView] Setting filePath to selectedFile:', selectedFile);
       setFilePath(selectedFile);
+      // Clear any previous file not found info when file changes
+      setFileNotFoundInfo(null);
     } else {
+      console.log('[DiffView] No selectedFile, resetting to current-file');
       // If no file is selected, reset to default
       setFilePath('current-file');
+      setFileNotFoundInfo(null);
     }
   }, [selectedFile]);
 
   // Load Diff Data & Templates
   useEffect(() => {
+    console.log('[DiffView] useEffect triggered with filePath:', filePath, 'isRepoLoaded:', isRepoLoaded);
     if (!isRepoLoaded) {
       // No repository loaded, skip loading
-      console.log('No repo loaded, skipping diff load');
+      console.log('[DiffView] No repo loaded, skipping diff load');
       return;
     }
-    console.log('Loading diff for file:', filePath);
+    console.log('[DiffView] Starting to load diff for file:', filePath);
     setLoading(true);
+    console.log('[DiffView] Loading state set to true');
     performanceMonitor.startTimer('diff_load');
 
-    // Check cache first
-    const cacheKey = `diff-${filePath || 'current-file'}`;
+    // Check cache first - include branch info in cache key
+    const baseBranch = diffContext?.base || 'none';
+    const headBranch = diffContext?.head || 'none';
+    const cacheKey = `diff-${filePath || 'current-file'}-${baseBranch}-${headBranch}`;
     console.log('Cache key:', cacheKey);
     const cachedDiff = diffCache.get<DiffLine[]>(cacheKey);
 
@@ -101,12 +117,33 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
     }
 
     // Fetch diff and templates in parallel
-    // When filePath is provided (e.g., from heatmap), show diff of HEAD vs working directory
+    // Use diffContext to determine which branches/commits to compare
     const fetchDiff = async () => {
       try {
-        console.log('fetchDiff called with filePath:', filePath);
-        const oldCommit = filePath && filePath !== 'current-file' ? 'HEAD' : undefined;
-        const newCommit = filePath && filePath !== 'current-file' ? undefined : undefined;
+        console.log('fetchDiff called with filePath:', filePath, 'diffContext:', diffContext);
+
+        // Determine commits based on diffContext
+        // If we have a diff context with base and head, use those branches
+        // Otherwise fall back to HEAD vs working directory
+        let oldCommit: string | undefined;
+        let newCommit: string | undefined;
+
+        if (diffContext && diffContext.base && diffContext.head) {
+          // Compare two branches/commits
+          oldCommit = diffContext.base;
+          newCommit = diffContext.head;
+          console.log('Using branch comparison: base=', oldCommit, 'head=', newCommit);
+        } else if (filePath && filePath !== 'current-file') {
+          // No branch context, show HEAD vs working directory for specific file
+          oldCommit = 'HEAD';
+          newCommit = undefined;
+          console.log('Using HEAD vs working directory');
+        } else {
+          // No context at all
+          oldCommit = undefined;
+          newCommit = undefined;
+          console.log('No commit context specified');
+        }
 
         console.log('Requesting diff with oldCommit:', oldCommit, 'newCommit:', newCommit);
 
@@ -120,14 +157,13 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
 
         if (diffData.length === 0) {
           console.log('No diff lines returned for file:', filePath);
-          console.log('This might mean the file has no changes between HEAD and working directory');
+          console.log('This means the file has no changes between HEAD and working directory');
 
-          // If we're viewing a specific file (not a diff context), show file content
+          // 如果是查看特定文件，尝试显示文件内容
           if (filePath && filePath !== 'current-file') {
             console.log('Attempting to load file content for:', filePath);
             setShowFileContent(true);
 
-            // Create diff lines showing the entire file content
             try {
               const content = await readFileContent(filePath);
               console.log('File content loaded, length:', content.length, 'characters');
@@ -149,14 +185,48 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
               setOptimizedChunks([]);
             } catch (err) {
               console.error('Failed to load file content:', err as Error);
-              console.error('Error details:', {
-                filePath: filePath,
-                errorMessage: (err as Error).message,
-                errorStack: (err as Error).stack
-              });
-              // Set empty lines on error
-              setDiffLines([]);
-              setOptimizedChunks([]);
+              const errorMessage = (err as Error).message || '';
+
+              // 检查是否是"文件不存在"错误（Git历史文件或已删除文件）
+              if (errorMessage.includes('No such file or directory') ||
+                  errorMessage.includes('os error 2') ||
+                  errorMessage.includes('The system cannot find the file')) {
+                // 分析文件不存在的具体原因
+                let message = '';
+                let details = '';
+
+                // 根据是否有diffContext判断是否是基线对比场景
+                if (diffContext) {
+                  // 基线对比场景：文件在某个基线中被删除
+                  message = `File deleted in target branch`;
+                  details = `This file exists in "${diffContext.base}" but has been removed in "${diffContext.head}".`;
+                } else {
+                  // 默认场景：工作目录文件被删除
+                  message = `File not found in working directory`;
+                  details = `This file exists in Git history but has been removed from the current working directory. It may have been deleted or moved.`;
+                }
+
+                console.log('File not found:', message, details);
+
+                // 设置友好提示信息，而不是用DiffLine显示错误
+                setFileNotFoundInfo({
+                  exists: false,
+                  message,
+                  details
+                });
+                setDiffLines([]);
+                setOptimizedChunks([]);
+              } else {
+                console.log('Other error (not file not found):', errorMessage);
+                // 其他错误显示友好提示，但使用不同的消息
+                setFileNotFoundInfo({
+                  exists: false,
+                  message: 'Failed to load file',
+                  details: `An error occurred while loading the file: ${errorMessage}`
+                });
+                setDiffLines([]);
+                setOptimizedChunks([]);
+              }
             }
             return;
           }
@@ -190,12 +260,13 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
         setDiffLines([]);
         setOptimizedChunks([]);
       } finally {
+        console.log('[DiffView] Setting loading state to false');
         setLoading(false);
       }
     };
 
     fetchDiff();
-  }, [isRepoLoaded, filePath, diffOptimizer, diffCache, performanceMonitor, getFileDiff, getReviewTemplates]);
+  }, [isRepoLoaded, filePath, diffContext, diffOptimizer, diffCache, performanceMonitor, getFileDiff, getReviewTemplates]);
 
   // --- Logic for Folding Lines with Optimization ---
   const displayLines = useMemo(() => {
@@ -614,7 +685,59 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
           </div>
         )}
 
+        {/* Friendly File Not Found Message */}
+        {fileNotFoundInfo && !loading && (
+          <div className="flex-1 overflow-y-auto p-8">
+            <div className="max-w-2xl mx-auto">
+              <div className="bg-editor-sidebar border border-editor-line/50 rounded-lg p-6 shadow-xl">
+                <div className="flex items-start gap-4">
+                  <div className="flex-shrink-0 w-12 h-12 rounded-full bg-editor-warning/10 flex items-center justify-center">
+                    <AlertTriangle size={24} className="text-editor-warning" />
+                  </div>
+                  <div className="flex-1">
+                    <h3 className="text-lg font-semibold text-editor-fg mb-2">
+                      {fileNotFoundInfo.message}
+                    </h3>
+                    <p className="text-sm text-gray-400 mb-4 leading-relaxed">
+                      {fileNotFoundInfo.details}
+                    </p>
+                    <div className="bg-editor-bg/50 border border-editor-line/30 rounded p-3 mb-4">
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">File Path</span>
+                      </div>
+                      <code className="text-xs text-editor-accent font-mono break-all">{filePath}</code>
+                    </div>
+                    {diffContext && (
+                      <div className="grid grid-cols-2 gap-2 mb-4">
+                        <div className="bg-editor-bg/30 border border-editor-line/30 rounded p-2">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <div className="w-2 h-2 rounded-full bg-editor-success"></div>
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Source Branch</span>
+                          </div>
+                          <code className="text-xs text-gray-300 font-mono">{diffContext.base}</code>
+                        </div>
+                        <div className="bg-editor-bg/30 border border-editor-line/30 rounded p-2">
+                          <div className="flex items-center gap-1.5 mb-1">
+                            <div className="w-2 h-2 rounded-full bg-editor-error"></div>
+                            <span className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">Target Branch</span>
+                          </div>
+                          <code className="text-xs text-gray-300 font-mono">{diffContext.head}</code>
+                        </div>
+                      </div>
+                    )}
+                    <div className="flex items-center gap-2 text-xs text-gray-500">
+                      <HelpCircle size={14} />
+                      <span>This file was likely deleted in a recent commit or branch merge.</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Virtual Diff Viewer for large files with smooth scrolling */}
+        {!fileNotFoundInfo && (
         <VirtualDiffViewer
           diffLines={displayLines}
           viewMode={viewMode}
@@ -634,8 +757,9 @@ const DiffView: React.FC<DiffViewProps> = ({ isMaximized, toggleMaximize, onActi
           renderLineContent={renderLineContent}
           isFileContent={showFileContent}
         />
+        )}
         {/* Fill empty space */}
-        <div className="flex-1 bg-editor-bg"></div>
+        {!fileNotFoundInfo && <div className="flex-1 bg-editor-bg"></div>}
       </div>
     </div>
   );

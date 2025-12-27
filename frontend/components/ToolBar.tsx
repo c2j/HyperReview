@@ -7,6 +7,7 @@ import type { Tag as TagType } from '../api/types';
 interface ToolBarProps {
   onAction: (msg: string) => void;
   onOpenRepo?: () => void;
+  onNewTask?: () => void;
   onImportTask?: () => void;
   showLeft?: boolean;
   showRight?: boolean;
@@ -15,9 +16,10 @@ interface ToolBarProps {
   diffContext?: { base: string; head: string };
 }
 
-const ToolBar: React.FC<ToolBarProps> = ({ 
-  onAction, 
-  onOpenRepo, 
+const ToolBar: React.FC<ToolBarProps> = ({
+  onAction,
+  onOpenRepo,
+  onNewTask: _onNewTask,
   onImportTask,
   showLeft = true,
   showRight = true,
@@ -132,7 +134,13 @@ const ToolBar: React.FC<ToolBarProps> = ({
         
         {/* Dynamic Branch Display */}
         {diffContext && (
-            <div className="flex items-center gap-1 text-editor-accent cursor-pointer hover:text-blue-300 transition-colors bg-editor-line/30 px-2 rounded" onClick={() => onAction("Switching Branch...")}>
+            <div
+                className="flex items-center gap-1 text-editor-accent cursor-pointer hover:text-blue-300 transition-colors bg-editor-line/30 px-2 rounded"
+                onClick={() => {
+                    console.log('[ToolBar] Branch area clicked, diffContext:', diffContext);
+                    onAction("Switching Branch...");
+                }}
+            >
                 <GitBranch size={10} />
                 <span className="text-editor-error/80 truncate max-w-[100px]">{diffContext.base}</span>
                 <ArrowLeft size={10} className="text-gray-500" />
@@ -140,7 +148,13 @@ const ToolBar: React.FC<ToolBarProps> = ({
             </div>
         )}
         {!diffContext && (
-            <div className="flex items-center gap-1 text-editor-accent cursor-pointer hover:text-blue-300 transition-colors" onClick={() => onAction("Switching Branch...")}>
+            <div
+                className="flex items-center gap-1 text-editor-accent cursor-pointer hover:text-blue-300 transition-colors"
+                onClick={() => {
+                    console.log('[ToolBar] Branch area clicked (no diffContext)');
+                    onAction("Switching Branch...");
+                }}
+            >
                 <GitBranch size={10} />
                 <span>feature/payment-retry</span>
             </div>

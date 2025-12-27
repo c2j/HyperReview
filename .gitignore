@@ -47,3 +47,6 @@ coverage/
 
 # OS files
 Thumbs.db
+
+src-tauri/hyper_review.db
+new-frontend-to-merge/

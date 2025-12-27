@@ -90,51 +90,65 @@ impl HeatmapGenerator {
         log::info!("Converting file churn to heatmap items...");
         let mut items: Vec<HeatmapItem> = file_churn
             .into_iter()
-            .map(|(file_path, change_frequency)| {
+            .enumerate()
+            .map(|(idx, (file_path, change_frequency))| {
                 // Calculate scores
                 let churn_score = (change_frequency as f32 / 100.0).min(1.0);
                 let complexity_score = self.file_stats
                     .get(&file_path)
                     .map(|s| s.complexity_score)
                     .unwrap_or(0.5);
-                let lines_of_code = self.file_stats
+                let _lines_of_code = self.file_stats
                     .get(&file_path)
                     .map(|s| s.lines_of_code)
                     .unwrap_or(100);
 
                 // Calculate impact score (weighted average)
-                let impact_score = churn_score * 0.4 + complexity_score * 0.6;
+                let impact_score_float = churn_score * 0.4 + complexity_score * 0.6;
+
+                // Convert to 0-100 scale
+                let score = (impact_score_float * 100.0) as u32;
 
                 // Determine category
-                let category = if impact_score > 0.7 {
+                let category = if impact_score_float > 0.7 {
                     HeatmapCategory::High
-                } else if impact_score > 0.4 {
+                } else if impact_score_float > 0.4 {
                     HeatmapCategory::Medium
                 } else {
                     HeatmapCategory::Low
                 };
 
+                // Extract file name from path
+                let name = std::path::Path::new(&file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(&file_path)
+                    .to_string();
+
+                // Check if file exists in working directory
+                let full_file_path = std::path::Path::new(repo_path).join(&file_path);
+                let file_exists = full_file_path.exists() && full_file_path.is_file();
+
                 HeatmapItem {
-                    file_path,
-                    impact_score,
-                    churn_score,
-                    complexity_score,
-                    change_frequency,
-                    lines_of_code,
-                    category,
+                    id: format!("heatmap-{}", idx),
+                    name,
+                    path: file_path,
+                    impact: category,
+                    score,
+                    exists: file_exists,
                 }
             })
             .collect();
 
         // Sort by impact score (descending)
-        items.sort_by(|a, b| b.impact_score.partial_cmp(&a.impact_score).unwrap_or(std::cmp::Ordering::Equal));
+        items.sort_by(|a, b| b.score.cmp(&a.score));
 
         log::info!("Successfully generated {} heatmap items", items.len());
         Ok(items)
     }
 
     /// Generate heatmap for changed files in current diff
-    pub fn generate_for_diff(&self, changed_files: &[String]) -> Vec<HeatmapItem> {
+    pub fn generate_for_diff(&self, changed_files: &[String], repo_path: Option<&str>) -> Vec<HeatmapItem> {
         changed_files
             .iter()
             .enumerate()
@@ -147,7 +161,10 @@ impl HeatmapGenerator {
 
                 let complexity_score = if is_source_file { 0.6 } else { 0.3 };
                 let churn_score = 0.5;
-                let impact_score = (complexity_score + churn_score) / 2.0;
+                let impact_score_float = (complexity_score + churn_score) / 2.0;
+
+                // Convert to 0-100 scale
+                let score = (impact_score_float * 100.0) as u32;
 
                 let category = if idx < 3 {
                     HeatmapCategory::High
@@ -157,14 +174,28 @@ impl HeatmapGenerator {
                     HeatmapCategory::Low
                 };
 
+                // Extract file name from path
+                let name = std::path::Path::new(file_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(file_path)
+                    .to_string();
+
+                // Check if file exists in working directory
+                let file_exists = if let Some(repo_path) = repo_path {
+                    let full_file_path = std::path::Path::new(repo_path).join(file_path);
+                    full_file_path.exists() && full_file_path.is_file()
+                } else {
+                    true // Default to true if no repo path provided
+                };
+
                 HeatmapItem {
-                    file_path: file_path.clone(),
-                    impact_score,
-                    churn_score,
-                    complexity_score,
-                    change_frequency: 1,
-                    lines_of_code: 100,
-                    category,
+                    id: format!("diff-{}", idx),
+                    name,
+                    path: file_path.clone(),
+                    impact: category,
+                    score,
+                    exists: file_exists,
                 }
             })
             .collect()

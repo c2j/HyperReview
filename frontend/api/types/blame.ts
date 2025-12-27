@@ -11,6 +11,13 @@ export interface BlameLine {
 }
 
 export interface BlameInfo {
-  file_path: string;
-  lines: BlameLine[];
+  file_path?: string;
+  lines?: BlameLine[];
+  author: string;
+  avatar: string;
+  time: string;
+  prName: string;
+  reviewer: string;
+  reviewerStatus: string;
+  comment: string;
 }

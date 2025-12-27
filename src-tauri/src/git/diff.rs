@@ -63,19 +63,24 @@ impl DiffEngine {
         let diff = match (old_tree, new_tree) {
             (Some(old), Some(new)) => {
                 // Diff between two commits
-                self.repository.diff_tree_to_tree(Some(&old), Some(&new), None)?
+                let mut diff_options = git2::DiffOptions::new();
+                diff_options.pathspec(file_path);
+                self.repository.diff_tree_to_tree(Some(&old), Some(&new), Some(&mut diff_options))?
             }
             (Some(old), None) => {
                 // Diff between a commit and working directory
                 let mut diff_options = git2::DiffOptions::new();
                 diff_options.include_untracked(true);
+                diff_options.pathspec(file_path);
 
                 // Create diff between old tree and working directory with index
-                self.repository.diff_tree_to_workdir_with_index(Some(&old), None)?
+                self.repository.diff_tree_to_workdir_with_index(Some(&old), Some(&mut diff_options))?
             }
             (None, Some(new)) => {
                 // Diff from empty to a commit (shouldn't normally happen)
-                self.repository.diff_tree_to_tree(None, Some(&new), None)?
+                let mut diff_options = git2::DiffOptions::new();
+                diff_options.pathspec(file_path);
+                self.repository.diff_tree_to_tree(None, Some(&new), Some(&mut diff_options))?
             }
             (None, None) => {
                 // Both are None - return empty diff
@@ -89,6 +94,7 @@ impl DiffEngine {
 
     /// Parse git diff into structured DiffLine objects for a specific file
     fn parse_diff(&self, diff: Diff, file_path: &str) -> Result<Vec<DiffLine>, HyperReviewError> {
+        log::info!("Parsing diff for file: {}", file_path);
         let mut lines = Vec::new();
         let mut old_line_num = 0;
         let mut new_line_num = 0;
@@ -100,6 +106,10 @@ impl DiffEngine {
             patch.extend_from_slice(line.content());
             true
         })?;
+
+        // Log the patch content for debugging
+        let patch_str = std::str::from_utf8(&patch).unwrap_or("");
+        log::debug!("Patch content for {}:\n{}", file_path, patch_str);
 
         let patch_reader = BufReader::new(patch.as_slice());
 
@@ -119,6 +129,8 @@ impl DiffEngine {
 
                     // Check if this diff is for our target file
                     in_target_file = old_file == file_path || new_file == file_path;
+                    log::debug!("Diff file check: old_file={}, new_file={}, target={}, match={}",
+                               old_file, new_file, file_path, in_target_file);
                 }
                 continue;
             }

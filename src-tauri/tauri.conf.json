@@ -1,28 +1,11 @@
 {
-  "$schema": "https://schema.tauri.app/config/1",
-  "package": {
-    "productName": "hyperreview",
-    "version": "0.1.0"
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devPath": "http://localhost:1422",
+    "distDir": "../dist"
   },
-
   "tauri": {
-    "bundle": {
-      "active": true,
-      "targets": "all",
-      "identifier": "com.c2j.hyperreview",
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
-      "publisher": "C2J",
-      "copyright": "Copyright © 2025 C2J. All rights reserved.",
-      "category": "DeveloperTool",
-      "shortDescription": "Advanced code review tool for Git repositories",
-      "longDescription": "HyperReview is a powerful desktop application for conducting thorough code reviews of Git repositories. It provides advanced diff viewing, comment management, task tracking, and analytics."
-    },
     "allowlist": {
       "shell": {
         "open": true
@@ -41,9 +24,35 @@
         "removeFile": true,
         "renameFile": true,
         "exists": true,
-
         "scope": ["**"]
       }
+    },
+    "bundle": {
+      "active": true,
+      "targets": "all",
+      "identifier": "com.c2j.hyperreview",
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "publisher": "C2J",
+      "copyright": "Copyright © 2025 C2J. All rights reserved.",
+      "category": "DeveloperTool",
+      "shortDescription": "Advanced code review tool for Git repositories",
+      "longDescription": "HyperReview is a powerful desktop application for conducting thorough code reviews of Git repositories. It provides advanced diff viewing, comment management, task tracking, and analytics."
+    },
+    "security": {
+      "csp": null,
+      "dangerousRemoteDomainIpcAccess": [
+        {
+          "domain": "localhost",
+          "windows": ["main"],
+          "plugins": []
+        }
+      ]
     },
     "windows": [
       {
@@ -61,22 +70,6 @@
         "url": "index.html",
         "visible": true
       }
-    ],
-    "security": {
-      "csp": null,
-      "dangerousRemoteDomainIpcAccess": [
-        {
-          "domain": "localhost",
-          "windows": ["main"],
-          "plugins": []
-        }
-      ]
-    }
-  },
-  "build": {
-    "beforeDevCommand": "npm run dev",
-    "devPath": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "distDir": "../dist"
+    ]
   }
 }

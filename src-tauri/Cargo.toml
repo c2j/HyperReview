@@ -20,7 +20,7 @@ tauri-build = { version = "1.5.4", features = [] }
 
 [dependencies]
 # Tauri
-tauri = { version = "1.8", features = [  "dialog-open", "dialog-save", "fs-read-file", "fs-create-dir", "fs-remove-dir", "fs-rename-file", "fs-remove-file", "fs-read-dir", "fs-write-file", "fs-copy-file", "fs-exists", "shell-open"] }
+tauri = { version = "1.8", features = [  "dialog-open", "dialog-save", "fs-read-file", "fs-create-dir", "fs-remove-dir", "fs-rename-file", "fs-remove-file", "fs-read-dir", "fs-write-file", "fs-copy-file", "fs-exists", "shell-open", "devtools"] }
 # tauri-plugin-opener = "1"
 # tauri-plugin-dialog = "1"
 

@@ -111,6 +111,10 @@ export const useGetHeatmap = () => {
   return useIPC<[], any[]>("get_heatmap");
 };
 
+export const useGetFileTree = () => {
+  return useIPC<{ baseBranch?: string; headBranch?: string }, any[]>("get_file_tree");
+};
+
 export const useGetChecklist = () => {
   return useIPC<{ file_path: string }, any[]>("get_checklist");
 };
@@ -129,6 +133,39 @@ export const useAnalyzeComplexity = () => {
 
 export const useScanSecurity = () => {
   return useIPC<{ file_path: string }, any[]>("scan_security");
+};
+
+export const useGetReviewGuide = () => {
+  return useIPC<[], any[]>("get_review_guide");
+};
+
+// Local task hooks
+export const useCreateLocalTask = () => {
+  return useIPC<{ title: string; taskType: string; files: string[] }, any>("create_local_task");
+};
+
+export const useGetLocalTasks = () => {
+  return useIPC<[], any[]>("get_local_tasks");
+};
+
+export const useDeleteLocalTask = () => {
+  return useIPC<{ taskId: string }, any>("delete_local_task");
+};
+
+export const useUpdateFileReviewStatus = () => {
+  return useIPC<{ taskId: string; fileId: string; reviewStatus: string; reviewComment?: string; submittedBy?: string }, any>("update_file_review_status");
+};
+
+export const useGetFileReviewComments = () => {
+  return useIPC<{ taskId: string; fileId: string }, any[]>("get_file_review_comments");
+};
+
+export const useMarkTaskCompleted = () => {
+  return useIPC<{ taskId: string }, any>("mark_task_completed");
+};
+
+export const useExportTaskReview = () => {
+  return useIPC<{ taskId: string; format: string }, string>("export_task_review");
 };
 
 // External integration hooks

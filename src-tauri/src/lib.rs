@@ -145,11 +145,22 @@ pub fn run() {
 
             // Insights and analysis commands
             commands::get_heatmap,
+            commands::get_file_tree,
             commands::get_checklist,
             commands::get_blame,
             commands::read_file_content,
             commands::analyze_complexity,
             commands::scan_security,
+            commands::get_review_guide,
+
+            // Local task commands
+            commands::create_local_task,
+            commands::get_local_tasks,
+            commands::delete_local_task,
+            commands::update_file_review_status,
+            commands::get_file_review_comments,
+            commands::mark_task_completed,
+            commands::export_task_review,
 
             // External integration commands
             commands::submit_review,

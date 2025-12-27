@@ -31,7 +31,7 @@ const StatusBar: React.FC = () => {
                 <span className="shrink-0">{stats.total_files} {t('statusbar.files')}</span>
                 <span className="shrink-0">→</span>
                 <span className="shrink-0 truncate">
-                    {t('statusbar.marked')} {stats.reviewed_files} (✗{stats.severe_issues} ⚠{stats.total_comments - stats.severe_issues} ❓{stats.pending_files})
+                    {t('statusbar.marked')} {stats.reviewed_files} (✗{(stats.severe_issues || 0)} ⚠{((stats.total_comments || 0) - (stats.severe_issues || 0))} ❓{stats.pending_files})
                 </span>
             </>
         ) : (

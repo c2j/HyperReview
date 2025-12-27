@@ -265,4 +265,338 @@ impl GitService {
             lines,
         })
     }
+
+    /// Get file tree for current repository
+    pub fn get_file_tree(&self) -> Result<Vec<crate::models::FileNode>, HyperReviewError> {
+        self.get_file_tree_with_branches(None, None)
+    }
+
+    /// Get file tree for current repository with specific branch comparison
+    /// If branches are provided, compares those branches instead of HEAD vs parent
+    pub fn get_file_tree_with_branches(
+        &self,
+        base_branch: Option<&str>,
+        head_branch: Option<&str>,
+    ) -> Result<Vec<crate::models::FileNode>, HyperReviewError> {
+        let repo_guard = self.repository.lock().unwrap();
+        let repo = repo_guard.as_ref()
+            .ok_or_else(|| HyperReviewError::Other {
+                message: "No repository loaded".to_string(),
+            })?;
+
+        log::info!("Getting file tree with base: {:?}, head: {:?}", base_branch, head_branch);
+
+        // Resolve the base and head commits/branches
+        let base_tree_ref: Option<git2::Tree>;
+        let head_tree_ref: Option<git2::Tree>;
+
+        if let (Some(base_ref), Some(head_ref)) = (base_branch, head_branch) {
+            // Both branches specified - compare them
+            log::info!("Comparing two branches: {} vs {}", base_ref, head_ref);
+
+            let base_obj = repo.revparse_single(base_ref)?;
+            let base_commit = base_obj.peel_to_commit()?;
+            let base_tree = base_commit.tree()?;
+
+            let head_obj = repo.revparse_single(head_ref)?;
+            let head_commit = head_obj.peel_to_commit()?;
+            let head_tree = head_commit.tree()?;
+
+            base_tree_ref = Some(base_tree);
+            head_tree_ref = Some(head_tree);
+        } else if let Some(head_ref) = head_branch {
+            // Only head specified - compare with its parent
+            log::info!("Using head branch with parent: {}", head_ref);
+
+            let head_obj = repo.revparse_single(head_ref)?;
+            let head_commit = head_obj.peel_to_commit()?;
+            let head_tree = head_commit.tree()?;
+
+            let parent = head_commit.parent(0).ok();
+            let parent_tree_opt = parent.and_then(|c| c.tree().ok());
+
+            base_tree_ref = parent_tree_opt;
+            head_tree_ref = Some(head_tree);
+        } else {
+            // No branches specified - use HEAD vs parent (default behavior)
+            log::info!("Using default HEAD vs parent");
+
+            let head = repo.head()?;
+            let head_commit = head.peel_to_commit()?;
+            let head_tree = head_commit.tree()?;
+
+            let parent = head_commit.parent(0).ok();
+            let parent_tree_opt = parent.and_then(|c| c.tree().ok());
+
+            base_tree_ref = parent_tree_opt;
+            head_tree_ref = Some(head_tree);
+        };
+
+        // Build file tree using the head tree, and add deleted files from diff
+        let mut file_nodes = Vec::new();
+        let mut tracked_paths: std::collections::HashSet<String> = std::collections::HashSet::new();
+
+        // First, traverse the head tree to get all current files
+        if let Some(head_tree) = head_tree_ref.as_ref() {
+            self.build_tree_from_git_tree(&repo, head_tree, base_tree_ref.as_ref(), "", &mut file_nodes, &mut tracked_paths)?;
+        }
+
+        // Then, add files that exist in base but were deleted in head
+        if let (Some(base_tree), Some(head_tree)) = (base_tree_ref.as_ref(), head_tree_ref.as_ref()) {
+            self.add_deleted_files(&repo, base_tree, head_tree, "", &mut file_nodes, &mut tracked_paths)?;
+        }
+
+        log::info!("File tree built with {} top-level items", file_nodes.len());
+        Ok(file_nodes)
+    }
+
+    /// Add files that exist in base_tree but not in head_tree (deleted files)
+    fn add_deleted_files(
+        &self,
+        repo: &Repository,
+        base_tree: &git2::Tree,
+        head_tree: &git2::Tree,
+        prefix: &str,
+        nodes: &mut Vec<crate::models::FileNode>,
+        tracked_paths: &mut std::collections::HashSet<String>,
+    ) -> Result<(), HyperReviewError> {
+        for entry in base_tree.iter() {
+            let name = entry.name().unwrap_or("unknown");
+            let full_path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+
+            match entry.kind() {
+                Some(git2::ObjectType::Tree) => {
+                    // It's a directory - recurse
+                    let child_base_tree = repo.find_tree(entry.id())?;
+                    // Check if corresponding directory exists in head
+                    if let Ok(head_entry) = head_tree.get_path(std::path::Path::new(&full_path)) {
+                        if let Some(head_child_tree) = repo.find_tree(head_entry.id()).ok() {
+                            self.add_deleted_files(repo, &child_base_tree, &head_child_tree, &full_path, nodes, tracked_paths)?;
+                        }
+                    } else {
+                        // Directory was deleted - add all its files as deleted
+                        self.add_all_files_as_deleted(repo, &child_base_tree, &full_path, nodes, tracked_paths)?;
+                    }
+                }
+                _ => {
+                    // It's a file
+                    if tracked_paths.contains(&full_path) {
+                        // File already exists in head, skip
+                        log::debug!("File in base already tracked in head (skipping): {}", full_path);
+                        continue;
+                    }
+
+                    // File exists in base but not in tracked_paths - check if it actually exists in head
+                    let exists_in_head = head_tree.get_path(std::path::Path::new(&full_path)).is_ok();
+                    if exists_in_head {
+                        log::warn!("BUG DETECTED: File {} exists in both trees but was not tracked! This indicates a bug in the first pass.", full_path);
+                        // Don't mark as deleted - this is a bug
+                        continue;
+                    }
+
+                    // File exists in base but not in head - it was deleted
+                    log::debug!("File DELETED (only in base): {}", full_path);
+                    // Get line count for deleted files
+                    let lines = if let Ok(blob) = repo.find_blob(entry.id()) {
+                        let content = std::str::from_utf8(blob.content()).unwrap_or("");
+                        content.lines().count() as u32
+                    } else {
+                        0
+                    };
+
+                    let path_for_id = full_path.replace('/', "_");
+
+                    nodes.push(crate::models::FileNode {
+                        id: format!("file-deleted-{}-{}", entry.id(), path_for_id),
+                        name: name.to_string(),
+                        path: full_path,
+                        file_type: "file".to_string(),
+                        status: "deleted".to_string(),
+                        children: None,
+                        stats: Some(crate::models::FileStats {
+                            added: 0,
+                            removed: lines,
+                        }),
+                        exists: false,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Add all files in a tree as deleted (recursively)
+    fn add_all_files_as_deleted(
+        &self,
+        repo: &Repository,
+        tree: &git2::Tree,
+        base_path: &str,
+        nodes: &mut Vec<crate::models::FileNode>,
+        tracked_paths: &mut std::collections::HashSet<String>,
+    ) -> Result<(), HyperReviewError> {
+        for entry in tree.iter() {
+            let name = entry.name().unwrap_or("unknown");
+            let full_path = if base_path.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{}", base_path, name)
+            };
+
+            if tracked_paths.contains(&full_path) {
+                continue;
+            }
+
+            match entry.kind() {
+                Some(git2::ObjectType::Tree) => {
+                    // Directory - recurse
+                    let child_tree = repo.find_tree(entry.id())?;
+                    self.add_all_files_as_deleted(repo, &child_tree, &full_path, nodes, tracked_paths)?;
+                }
+                _ => {
+                    // File - add as deleted
+                    let lines = if let Ok(blob) = repo.find_blob(entry.id()) {
+                        let content = std::str::from_utf8(blob.content()).unwrap_or("");
+                        content.lines().count() as u32
+                    } else {
+                        0
+                    };
+
+                    let path_for_id = full_path.replace('/', "_");
+
+                    nodes.push(crate::models::FileNode {
+                        id: format!("file-deleted-{}-{}", entry.id(), path_for_id),
+                        name: name.to_string(),
+                        path: full_path,
+                        file_type: "file".to_string(),
+                        status: "deleted".to_string(),
+                        children: None,
+                        stats: Some(crate::models::FileStats {
+                            added: 0,
+                            removed: lines,
+                        }),
+                        exists: false,
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Recursively build file tree from git tree with branch comparison
+    fn build_tree_from_git_tree(
+        &self,
+        repo: &Repository,
+        tree: &git2::Tree,
+        base_tree: Option<&git2::Tree>,
+        prefix: &str,
+        nodes: &mut Vec<crate::models::FileNode>,
+        tracked_paths: &mut std::collections::HashSet<String>,
+    ) -> Result<(), HyperReviewError> {
+        for entry in tree.iter() {
+            let name = entry.name().unwrap_or("unknown");
+            let full_path = if prefix.is_empty() {
+                name.to_string()
+            } else {
+                format!("{}/{}", prefix, name)
+            };
+
+            // Determine file type
+            let (file_type, children) = match entry.kind() {
+                Some(git2::ObjectType::Tree) => {
+                    // It's a directory
+                    let child_tree = repo.find_tree(entry.id())?;
+                    // Find corresponding directory in base tree for proper comparison
+                    let child_base_tree = if let Some(base) = base_tree {
+                        base.get_path(std::path::Path::new(&full_path))
+                            .ok()
+                            .and_then(|e| repo.find_tree(e.id()).ok())
+                    } else {
+                        None
+                    };
+                    let mut child_nodes = Vec::new();
+                    self.build_tree_from_git_tree(
+                        repo,
+                        &child_tree,
+                        child_base_tree.as_ref(),
+                        &full_path,
+                        &mut child_nodes,
+                        tracked_paths,
+                    )?;
+                    ("folder".to_string(), Some(child_nodes))
+                }
+                _ => {
+                    // It's a file
+                    ("file".to_string(), None)
+                }
+            };
+
+            // Determine file status and stats by comparing with base tree
+            let (status, stats) = if let Some(base) = base_tree {
+                if let Ok(base_entry) = base.get_path(std::path::Path::new(&full_path)) {
+                    // File exists in both commits - calculate diff
+                    if base_entry.id() == entry.id() {
+                        // File unchanged - same blob ID means identical content
+                        log::debug!("File unchanged (same blob): {} - base_id: {}, head_id: {}", full_path, base_entry.id(), entry.id());
+                        ("none".to_string(), None)
+                    } else {
+                        // File modified - different blob IDs
+                        // Don't show line stats for modified files since simple line count is inaccurate
+                        // User can click to see actual diff in the diff view
+                        log::debug!("File MODIFIED (different blob): {} - base_id: {}, head_id: {}", full_path, base_entry.id(), entry.id());
+                        ("modified".to_string(), None)
+                    }
+                } else {
+                    // File is new (only exists in head)
+                    log::debug!("File ADDED (only in head): {}", full_path);
+                    let lines = if let Ok(blob) = repo.find_blob(entry.id()) {
+                        let content = std::str::from_utf8(blob.content()).unwrap_or("");
+                        content.lines().count() as u32
+                    } else {
+                        0
+                    };
+
+                    ("added".to_string(), Some(crate::models::FileStats {
+                        added: lines,
+                        removed: 0,
+                    }))
+                }
+            } else {
+                // No base tree - can't determine status
+                log::debug!("No base tree for comparison: {}", full_path);
+                ("none".to_string(), None)
+            };
+
+            // Check if file exists in the working directory
+            let repo_path = repo.workdir().unwrap_or_else(|| std::path::Path::new("."));
+            let full_file_path = repo_path.join(&full_path);
+            let file_exists = full_file_path.exists() && full_file_path.is_file();
+
+            let path_for_id = full_path.replace('/', "_");
+
+            // Track this path so we don't add it again in deleted files pass
+            tracked_paths.insert(full_path.clone());
+
+            // Log before moving values
+            log::debug!("Tracked file in head pass: {} (status: {}, stats: {:?})", full_path, status, stats);
+
+            nodes.push(crate::models::FileNode {
+                id: format!("file-{}-{}", entry.id(), path_for_id),
+                name: name.to_string(),
+                path: full_path,
+                file_type,
+                status,
+                children,
+                stats,
+                exists: file_exists,
+            });
+        }
+
+        Ok(())
+    }
 }

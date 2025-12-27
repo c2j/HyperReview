@@ -331,6 +331,28 @@ pub async fn get_heatmap(state: State<'_, AppState>) -> Result<Vec<HeatmapItem>,
     Ok(result)
 }
 
+/// Gets file tree for current repository
+/// Optionally accepts base and head branches/commits for comparison
+#[tauri::command]
+pub async fn get_file_tree(
+    base_branch: Option<String>,
+    head_branch: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<Vec<FileNode>, String> {
+    log::info!("Getting file tree with base: {:?}, head: {:?}", base_branch, head_branch);
+
+    let git_service = state.git_service.lock().unwrap();
+    let repo_path = git_service.get_current_path()
+        .ok_or_else(|| "No repository loaded".to_string())?;
+
+    log::info!("Generating file tree for repo: {}", repo_path);
+    let result = git_service.get_file_tree_with_branches(base_branch.as_deref(), head_branch.as_deref())
+        .map_err(|e| e.to_string())?;
+
+    log::info!("File tree generated with {} items", result.len());
+    Ok(result)
+}
+
 /// Gets smart checklist
 #[tauri::command]
 pub async fn get_checklist(file_path: String) -> Result<Vec<ChecklistItem>, String> {
@@ -652,4 +674,324 @@ pub async fn create_tag(
         .map_err(|e| e.to_string())?;
 
     Ok(tag)
+}
+
+/// Gets review guides from docs/CheckList.json file
+#[tauri::command]
+pub async fn get_review_guide(state: State<'_, AppState>) -> Result<Vec<ReviewGuideItem>, String> {
+    use crate::models::{ChecklistJsonItem, map_checklist_severity, get_applicable_extensions};
+
+    log::info!("Getting review guides from docs/CheckList.json");
+
+    // Try to read from docs/CheckList.json
+    let checklist_path = "docs/CheckList.json";
+
+    // Check if file exists and read it
+    let json_content = match std::fs::read_to_string(checklist_path) {
+        Ok(content) => {
+            log::info!("Successfully read docs/CheckList.json");
+            content
+        }
+        Err(e) => {
+            log::warn!("Failed to read docs/CheckList.json: {}, using default guides", e);
+            // Return default guides if file doesn't exist
+            let default_guides = get_default_review_guides();
+
+            // Store defaults in database for next time
+            let database = state.database.lock().unwrap();
+            for guide in &default_guides {
+                if let Err(e) = database.store_review_guide(guide) {
+                    log::error!("Failed to store default guide {}: {}", guide.id, e);
+                }
+            }
+
+            return Ok(default_guides);
+        }
+    };
+
+    // Parse JSON
+    let checklist_items: Vec<ChecklistJsonItem> = match serde_json::from_str::<Vec<ChecklistJsonItem>>(&json_content) {
+        Ok(items) => {
+            log::info!("Parsed {} checklist items from JSON", items.len());
+            items
+        }
+        Err(e) => {
+            log::error!("Failed to parse CheckList.json: {}, using default guides", e);
+            return Ok(get_default_review_guides());
+        }
+    };
+
+    // Convert checklist items to review guide items (使用中文类别)
+    let guides: Vec<ReviewGuideItem> = checklist_items
+        .into_iter()
+        .map(|item| {
+            let title = format!("{} - {}", item.subcategory, item.id);
+            // 直接使用原始的中文类别
+            let category = item.category.clone();
+            let severity = map_checklist_severity(&item.subcategory);
+            let applicable_extensions = get_applicable_extensions(&item.subcategory);
+
+            ReviewGuideItem {
+                id: item.id.clone(),
+                category,
+                title,
+                description: item.description,
+                severity,
+                reference_url: None,
+                applicable_extensions,
+            }
+        })
+        .collect();
+
+    log::info!("Converted {} checklist items to review guides", guides.len());
+
+    // Store in database for caching
+    let database = state.database.lock().unwrap();
+    for guide in &guides {
+        if let Err(e) = database.store_review_guide(guide) {
+            log::error!("Failed to store guide {}: {}", guide.id, e);
+        }
+    }
+
+    Ok(guides)
+}
+
+/// Get default review guides to initialize the database
+fn get_default_review_guides() -> Vec<ReviewGuideItem> {
+    vec![
+        ReviewGuideItem {
+            id: "g1".to_string(),
+            category: "安全性".to_string(),
+            severity: ReviewGuideSeverity::High,
+            title: "SQL 注入风险".to_string(),
+            description: "避免在 SQL 查询中使用字符串拼接。使用参数化语句或 ORM。".to_string(),
+            reference_url: Some("https://owasp.org/www-community/attacks/SQL_Injection".to_string()),
+            applicable_extensions: vec![".java".to_string(), ".xml".to_string(), ".sql".to_string(), ".py".to_string(), ".go".to_string(), ".rs".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g2".to_string(),
+            category: "安全性".to_string(),
+            severity: ReviewGuideSeverity::High,
+            title: "认证绕过".to_string(),
+            description: "确保所有敏感端点都需要适当的身份验证和授权。".to_string(),
+            reference_url: Some("https://owasp.org/www-project-top-ten/".to_string()),
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g3".to_string(),
+            category: "安全性".to_string(),
+            severity: ReviewGuideSeverity::High,
+            title: "硬编码密钥".to_string(),
+            description: "永远不要硬编码密码、API 密钥或令牌。使用环境变量或密钥管理。".to_string(),
+            reference_url: Some("https://cwe.mitre.org/data/definitions/798.html".to_string()),
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string(), ".yaml".to_string(), ".yml".to_string(), ".env".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g4".to_string(),
+            category: "安全性".to_string(),
+            severity: ReviewGuideSeverity::Medium,
+            title: "XSS 防护".to_string(),
+            description: "对用户输入进行清理并使用适当的编码以防止跨站脚本攻击。".to_string(),
+            reference_url: Some("https://owasp.org/www-community/attacks/xss/".to_string()),
+            applicable_extensions: vec![".tsx".to_string(), ".jsx".to_string(), ".ts".to_string(), ".js".to_string(), ".html".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g5".to_string(),
+            category: "性能优化".to_string(),
+            severity: ReviewGuideSeverity::Medium,
+            title: "大对象分配".to_string(),
+            description: "避免在循环中创建对象。尽可能重用对象。".to_string(),
+            reference_url: Some("https://en.wikipedia.org/wiki/Object_pool_pattern".to_string()),
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g6".to_string(),
+            category: "性能优化".to_string(),
+            severity: ReviewGuideSeverity::Medium,
+            title: "N+1 查询问题".to_string(),
+            description: "注意 ORM 中的 N+1 查询。使用预加载或批量获取来优化数据库访问。".to_string(),
+            reference_url: Some("https://stackoverflow.com/questions/97197/what-is-the-n1-selects-issue".to_string()),
+            applicable_extensions: vec![".java".to_string(), ".py".to_string(), ".rb".to_string(), ".go".to_string(), ".ts".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g7".to_string(),
+            category: "性能优化".to_string(),
+            severity: ReviewGuideSeverity::Low,
+            title: "不必要的计算".to_string(),
+            description: "将昂贵的计算移到循环外，并在适当时缓存结果。".to_string(),
+            reference_url: None,
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g8".to_string(),
+            category: "代码规范".to_string(),
+            severity: ReviewGuideSeverity::Low,
+            title: "缺少文档".to_string(),
+            description: "公共 API 应该有清晰的文档注释，说明目的、参数和返回值。".to_string(),
+            reference_url: None,
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".py".to_string(), ".ts".to_string(), ".tsx".to_string(), ".rs".to_string(), ".md".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g9".to_string(),
+            category: "代码规范".to_string(),
+            severity: ReviewGuideSeverity::Low,
+            title: "命名规范".to_string(),
+            description: "遵循特定语言的命名规范（JS/TS 使用 camelCase，类使用 PascalCase，Python/Go 使用 snake_case）。".to_string(),
+            reference_url: None,
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string(), ".js".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g10".to_string(),
+            category: "代码规范".to_string(),
+            severity: ReviewGuideSeverity::Medium,
+            title: "错误处理".to_string(),
+            description: "确保适当的错误处理和有意义的错误消息。避免静默失败和通用 catch 块。".to_string(),
+            reference_url: None,
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g11".to_string(),
+            category: "代码规范".to_string(),
+            severity: ReviewGuideSeverity::Medium,
+            title: "竞态条件".to_string(),
+            description: "在并发上下文中小心共享状态。使用适当的同步机制。".to_string(),
+            reference_url: Some("https://en.wikipedia.org/wiki/Race_condition#In_software".to_string()),
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string()],
+        },
+        ReviewGuideItem {
+            id: "g12".to_string(),
+            category: "代码规范".to_string(),
+            severity: ReviewGuideSeverity::Low,
+            title: "输入验证".to_string(),
+            description: "始终验证和清理用户输入。检查 null/undefined、类型和范围约束。".to_string(),
+            reference_url: None,
+            applicable_extensions: vec![".java".to_string(), ".go".to_string(), ".ts".to_string(), ".tsx".to_string(), ".py".to_string(), ".rs".to_string()],
+        },
+    ]
+}
+
+/// Create a new local task
+#[tauri::command]
+pub async fn create_local_task(
+    title: String,
+    task_type: String,
+    files: Vec<String>,
+    state: State<'_, AppState>,
+) -> Result<Task, String> {
+    log::info!("Creating local task: {} of type {} with {} files", title, task_type, files.len());
+
+    let database = state.database.lock().unwrap();
+
+    database
+        .create_local_task(&title, &task_type, &files)
+        .map_err(|e| e.to_string())
+}
+
+/// Get all local tasks
+#[tauri::command]
+pub async fn get_local_tasks(
+    state: State<'_, AppState>,
+) -> Result<Vec<Task>, String> {
+    log::info!("Getting local tasks");
+
+    let database = state.database.lock().unwrap();
+
+    database
+        .get_local_tasks()
+        .map_err(|e| e.to_string())
+}
+
+/// Delete a local task
+#[tauri::command]
+pub async fn delete_local_task(
+    task_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    log::info!("Deleting local task: {}", task_id);
+
+    let database = state.database.lock().unwrap();
+
+    database
+        .delete_local_task(&task_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Update file review status
+#[tauri::command]
+pub async fn update_file_review_status(
+    task_id: String,
+    file_id: String,
+    review_status: String,
+    review_comment: Option<String>,
+    submitted_by: Option<String>,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    log::info!("Updating file review status: task={}, file={}, status={}", task_id, file_id, review_status);
+
+    let database = state.database.lock().unwrap();
+
+    database
+        .update_file_review_status(&task_id, &file_id, &review_status, review_comment.as_deref(), submitted_by.as_deref())
+        .map_err(|e| e.to_string())
+}
+
+/// Get all review comments for a file
+#[tauri::command]
+pub async fn get_file_review_comments(
+    task_id: String,
+    file_id: String,
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::models::FileReviewComment>, String> {
+    log::info!("Getting file review comments: task={}, file={}", task_id, file_id);
+
+    let database = state.database.lock().unwrap();
+
+    database
+        .get_file_review_comments(&task_id, &file_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Mark task as completed
+#[tauri::command]
+pub async fn mark_task_completed(
+    task_id: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    log::info!("Marking task as completed: {}", task_id);
+
+    let database = state.database.lock().unwrap();
+
+    database
+        .mark_task_completed(&task_id)
+        .map_err(|e| e.to_string())
+}
+
+/// Export task review data
+/// Returns CSV content that can be saved as a file
+#[tauri::command]
+pub async fn export_task_review(
+    task_id: String,
+    format: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    log::info!("Exporting task review: task={}, format={}", task_id, format);
+
+    let database = state.database.lock().unwrap();
+
+    match format.as_str() {
+        "csv" => {
+            database
+                .export_task_review_csv(&task_id)
+                .map_err(|e| e.to_string())
+        }
+        "excel" => {
+            // For Excel, we'll return CSV with .xlsx extension
+            // A proper Excel export would require a library like rust_xlsxwriter
+            // The CSV is compatible with Excel and has UTF-8 BOM for proper encoding
+            database
+                .export_task_review_csv(&task_id)
+                .map_err(|e| e.to_string())
+        }
+        _ => Err(format!("Unsupported export format: {}", format)),
+    }
 }
