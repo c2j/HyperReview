@@ -10,13 +10,12 @@ pub mod commands;
 pub mod models;
 pub mod errors;
 
-// Git operations module
 pub mod git {
     pub mod service;
     pub mod diff;
+    pub mod repo_manager;
 }
 
-// Static analysis module
 pub mod analysis {
     pub mod engine;
     pub mod heatmap;
@@ -25,28 +24,26 @@ pub mod analysis {
     pub mod grammars;
 }
 
-// Storage module
 pub mod storage {
     pub mod sqlite;
     pub mod cache;
     pub mod credentials;
+    pub mod task_store;
 }
 
-// Search module
 pub mod search {
     pub mod service;
     pub mod index;
 }
 
-// External system integration module
 pub mod remote {
     pub mod client;
     pub mod gitlab_client;
     pub mod gerrit_client;
     pub mod codearts_client;
+    pub mod custom_client;
 }
 
-// Utility modules
 pub mod utils {
     pub mod validation;
     pub mod metrics;
@@ -63,7 +60,9 @@ pub struct AppState {
     /// SQLite database connection
     pub database: Arc<Mutex<storage::sqlite::Database>>,
     /// Background indexer for performance optimization
-    pub background_indexer: Arc<Mutex<()>>, // TODO: Implement background indexer
+    pub background_indexer: Arc<Mutex<()>>,
+    /// Credential store for external systems
+    pub credential_store: Arc<Mutex<storage::credentials::CredentialStore>>,
 }
 
 impl AppState {
@@ -87,6 +86,7 @@ impl AppState {
             cache_manager: Arc::new(storage::cache::CacheManager::new()),
             database: Arc::new(Mutex::new(database)),
             background_indexer: Arc::new(Mutex::new(())),
+            credential_store: Arc::new(Mutex::new(storage::credentials::CredentialStore::new())),
         })
     }
 }
@@ -121,56 +121,66 @@ pub fn run() {
         .manage(app_state)
         .invoke_handler(tauri::generate_handler![
             // Repository management commands
-            commands::open_repo_dialog,
-            commands::open_repo_dialog_frontend,
-            commands::get_recent_repos,
-            commands::get_branches,
-            commands::load_repo,
+            commands::general::open_repo_dialog,
+            commands::general::open_repo_dialog_frontend,
+            commands::general::get_recent_repos,
+            commands::general::get_branches,
+            commands::general::load_repo,
 
             // Review workflow commands
-            commands::get_file_diff,
-            commands::add_comment,
-            commands::update_comment,
-            commands::delete_comment,
-            commands::get_comments,
-
-            // Task management commands
-            commands::get_tasks,
-            commands::get_review_stats,
-            commands::get_quality_gates,
+            commands::general::get_file_diff,
+            commands::general::add_comment,
+            commands::general::update_comment,
+            commands::general::delete_comment,
+            commands::general::get_comments,
 
             // Template management commands
-            commands::get_review_templates,
-            commands::create_template,
+            commands::general::get_review_templates,
+            commands::general::create_template,
 
             // Insights and analysis commands
-            commands::get_heatmap,
-            commands::get_file_tree,
-            commands::get_checklist,
-            commands::get_blame,
-            commands::read_file_content,
-            commands::analyze_complexity,
-            commands::scan_security,
-            commands::get_review_guide,
+            commands::general::get_heatmap,
+            commands::general::get_file_tree,
+            commands::general::get_checklist,
+            commands::general::get_blame,
+            commands::general::read_file_content,
+            commands::general::analyze_complexity,
+            commands::general::scan_security,
+            commands::general::get_review_guide,
 
             // Local task commands
-            commands::create_local_task,
-            commands::get_local_tasks,
-            commands::delete_local_task,
-            commands::update_file_review_status,
-            commands::get_file_review_comments,
-            commands::mark_task_completed,
-            commands::export_task_review,
+            commands::task_commands::parse_task_text,
+            commands::task_commands::create_task,
+            commands::task_commands::list_tasks,
+            commands::task_commands::get_task,
+            commands::task_commands::update_task_progress,
+            commands::task_commands::read_task_item_from_ref,
+            commands::task_commands::delete_task,
+            commands::task_commands::archive_task,
+            commands::task_commands::reimport_task_text,
+            commands::task_commands::update_task,
+            commands::task_commands::export_task,
+            commands::task_commands::export_all_tasks,
+            commands::task_commands::submit_task_to_gerrit,
+            commands::task_commands::submit_task_to_codearts,
+            commands::task_commands::submit_task_to_custom_api,
+
+            commands::general::get_tags,
+            commands::general::create_tag,
+
+            // Credential management commands
+            commands::general::store_gerrit_credentials,
+            commands::general::get_gerrit_credentials,
+            commands::general::delete_gerrit_credentials,
+            commands::general::has_gerrit_credentials,
 
             // External integration commands
-            commands::submit_review,
-            commands::sync_repo,
+            commands::general::submit_review,
+            commands::general::sync_repo,
 
             // Search and configuration commands
-            commands::search,
-            commands::get_commands,
-            commands::get_tags,
-            commands::create_tag,
+            commands::general::search,
+            commands::general::get_commands,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

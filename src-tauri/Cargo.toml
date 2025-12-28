@@ -43,7 +43,7 @@ tree-sitter-sql = "0.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "blocking"] }
 
 # Concurrency
 rayon = "1.8"
@@ -76,6 +76,9 @@ lru = "0.12"
 
 # System info
 sys-info = "0.9"
+
+# Directory utilities
+dirs = "5.0"
 
 # Encryption
 base64 = "0.22"

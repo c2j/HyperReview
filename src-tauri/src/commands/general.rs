@@ -565,62 +565,63 @@ pub async fn search(query: String, state: State<'_, AppState>) -> Result<Vec<Sea
         .map_err(|e| e.to_string())
 }
 
-/// Gets available commands
+/// Gets available commands for command palette
 #[tauri::command]
-pub async fn get_commands() -> Result<Vec<CommandInfo>, String> {
+pub async fn get_commands() -> Result<Vec<crate::models::CommandInfo>, String> {
     log::info!("Getting available commands");
 
     // Return list of available commands for command palette
+    // Note: These are displayed in CommandPalette, so name is the primary field shown
     Ok(vec![
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "open_repo".to_string(),
             name: "Open Repository".to_string(),
             description: "Open a Git repository".to_string(),
             category: "Repository".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "get_branches".to_string(),
             name: "List Branches".to_string(),
-            description: "List all branches in the repository".to_string(),
+            description: "List all branches in repository".to_string(),
             category: "Repository".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "get_file_diff".to_string(),
             name: "View Diff".to_string(),
             description: "View file diff between commits".to_string(),
             category: "Review".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "add_comment".to_string(),
             name: "Add Comment".to_string(),
             description: "Add a review comment".to_string(),
             category: "Review".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "get_heatmap".to_string(),
             name: "View Heatmap".to_string(),
             description: "View file impact heatmap".to_string(),
             category: "Analysis".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "analyze_complexity".to_string(),
             name: "Analyze Complexity".to_string(),
             description: "Analyze code complexity".to_string(),
             category: "Analysis".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "scan_security".to_string(),
             name: "Security Scan".to_string(),
             description: "Scan for security issues".to_string(),
             category: "Analysis".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "search".to_string(),
             name: "Search".to_string(),
             description: "Search repository".to_string(),
             category: "Navigation".to_string(),
         },
-        CommandInfo {
+        crate::models::CommandInfo {
             id: "submit_review".to_string(),
             name: "Submit Review".to_string(),
             description: "Submit review to external system".to_string(),
@@ -994,4 +995,67 @@ pub async fn export_task_review(
         }
         _ => Err(format!("Unsupported export format: {}", format)),
     }
+}
+
+/// Store Gerrit credentials
+#[tauri::command]
+pub async fn store_gerrit_credentials(
+    state: State<'_, AppState>,
+    username: String,
+    password: String,
+) -> Result<(), String> {
+    log::info!("Storing Gerrit credentials for user: {}", username);
+
+    let mut credential_store = state.credential_store.lock().unwrap();
+    credential_store
+        .store("gerrit", &username, &password)
+        .map_err(|e| format!("Failed to store Gerrit credentials: {}", e))?;
+
+    log::info!("Gerrit credentials stored successfully");
+    Ok(())
+}
+
+/// Retrieve Gerrit credentials
+#[tauri::command]
+pub async fn get_gerrit_credentials(
+    state: State<'_, AppState>,
+    username: String,
+) -> Result<Option<String>, String> {
+    log::info!("Retrieving Gerrit credentials for user: {}", username);
+
+    let credential_store = state.credential_store.lock().unwrap();
+    match credential_store.retrieve("gerrit", &username) {
+        Ok(Some(cred)) => Ok(Some(cred.password)),
+        Ok(None) => Ok(None),
+        Err(e) => Err(format!("Failed to retrieve Gerrit credentials: {}", e)),
+    }
+}
+
+/// Delete Gerrit credentials
+#[tauri::command]
+pub async fn delete_gerrit_credentials(
+    state: State<'_, AppState>,
+    username: String,
+) -> Result<(), String> {
+    log::info!("Deleting Gerrit credentials for user: {}", username);
+
+    let mut credential_store = state.credential_store.lock().unwrap();
+    credential_store
+        .delete("gerrit", &username)
+        .map_err(|e| format!("Failed to delete Gerrit credentials: {}", e))?;
+
+    log::info!("Gerrit credentials deleted successfully");
+    Ok(())
+}
+
+/// Check if Gerrit credentials exist
+#[tauri::command]
+pub async fn has_gerrit_credentials(
+    state: State<'_, AppState>,
+    username: String,
+) -> Result<bool, String> {
+    log::info!("Checking Gerrit credentials for user: {}", username);
+
+    let credential_store = state.credential_store.lock().unwrap();
+    Ok(credential_store.has_credential("gerrit", &username))
 }

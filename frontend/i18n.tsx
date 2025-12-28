@@ -1,4 +1,3 @@
-
 import React, { createContext, useState, useContext, ReactNode } from 'react';
 
 type Language = 'zh' | 'en';
@@ -147,6 +146,7 @@ const translations = {
     'modal.settings.editor': '编辑器',
     'modal.settings.shortcuts': '快捷键',
     'modal.settings.ai': 'AI 分析',
+    'modal.settings.editor_settings': '编辑器设置',
     'modal.settings.language': '语言',
     'modal.settings.appearance': '外观',
     'modal.settings.behavior': '行为',
@@ -178,13 +178,17 @@ const translations = {
 
     // Tour
     'tour.welcome.title': '欢迎使用 HyperReview',
-    'tour.welcome.content': '这是一款专为技术负责人打造的高性能代码评审终端。让我们花 1 分钟了解核心功能。',
+    'tour.welcome.content':
+      '这是一款专为技术负责人打造的高性能代码评审终端。让我们花 1 分钟了解核心功能。',
     'tour.tasks.title': '任务导航区',
-    'tour.tasks.content': '在这里管理您的待评审PR、关注的变更以及本地创建的任务。支持多层级文件树浏览。',
+    'tour.tasks.content':
+      '在这里管理您的待评审PR、关注的变更以及本地创建的任务。支持多层级文件树浏览。',
     'tour.diff.title': 'Diff 主战场',
-    'tour.diff.content': '核心审阅区域。支持语法高亮、快捷跳转、右键插入评审模板，以及 Ctrl+F 局部搜索。',
+    'tour.diff.content':
+      '核心审阅区域。支持语法高亮、快捷跳转、右键插入评审模板，以及 Ctrl+F 局部搜索。',
     'tour.action.title': '快捷决策栏',
-    'tour.action.content': '评审的关键动作区。快速批准、驳回或标记问题。支持全键盘操作 (如 Shift+Enter 批量提交)。',
+    'tour.action.content':
+      '评审的关键动作区。快速批准、驳回或标记问题。支持全键盘操作 (如 Shift+Enter 批量提交)。',
     'tour.right.title': '多维辅助面板',
     'tour.right.content': '查看架构热力图、Git Blame 追溯、评审统计数据以及待办清单。',
     'tour.toolbar.title': '全局工具栏',
@@ -319,7 +323,7 @@ const translations = {
     'modal.tag_manager.title': 'Manage Quick Tags',
     'modal.tag_manager.no_tags': 'No tags defined',
     'modal.tag_manager.add': 'Add New Tag',
-    'modal.tag_manager.placeholder': 'Tag name (e.g. \'Security Risk\')',
+    'modal.tag_manager.placeholder': "Tag name (e.g. 'Security Risk')",
     'modal.tag_manager.done': 'Done',
     'modal.sync.title': 'Remote Sync Status',
     'modal.sync.syncing': 'Synchronizing...',
@@ -339,6 +343,7 @@ const translations = {
     'modal.settings.editor': 'Editor',
     'modal.settings.shortcuts': 'Shortcuts',
     'modal.settings.ai': 'AI Analysis',
+    'modal.settings.editor_settings': 'Editor Settings',
     'modal.settings.language': 'Language',
     'modal.settings.appearance': 'Appearance',
     'modal.settings.behavior': 'Behavior',
@@ -370,15 +375,20 @@ const translations = {
 
     // Tour
     'tour.welcome.title': 'Welcome to HyperReview',
-    'tour.welcome.content': 'A high-performance terminal designed for Tech Leads. Let\'s take a 1-minute tour.',
+    'tour.welcome.content':
+      "A high-performance terminal designed for Tech Leads. Let's take a 1-minute tour.",
     'tour.tasks.title': 'Task Navigation',
-    'tour.tasks.content': 'Manage PRs, watched changes, and local tasks here. Supports multi-level file tree navigation.',
+    'tour.tasks.content':
+      'Manage PRs, watched changes, and local tasks here. Supports multi-level file tree navigation.',
     'tour.diff.title': 'The Diff Arena',
-    'tour.diff.content': 'Your main review workspace. Features syntax highlighting, jump-to-def, and right-click templates.',
+    'tour.diff.content':
+      'Your main review workspace. Features syntax highlighting, jump-to-def, and right-click templates.',
     'tour.action.title': 'Decision Bar',
-    'tour.action.content': 'Key review actions live here. Approve, Reject, or Comment. Fully keyboard accessible.',
+    'tour.action.content':
+      'Key review actions live here. Approve, Reject, or Comment. Fully keyboard accessible.',
     'tour.right.title': 'Insights Panel',
-    'tour.right.content': 'Check architecture heatmaps, Git blame details, and your review checklist.',
+    'tour.right.content':
+      'Check architecture heatmaps, Git blame details, and your review checklist.',
     'tour.toolbar.title': 'Global Toolbar',
     'tour.toolbar.content': 'Open repos, import patches, switch branches, or filter issues by tag.',
     'tour.finish.title': 'Ready to Go',
@@ -387,7 +397,7 @@ const translations = {
     'tour.prev': 'Back',
     'tour.finish': 'Start',
     'tour.skip': 'Skip',
-  }
+  },
 };
 
 const LanguageContext = createContext<{
@@ -400,7 +410,7 @@ const LanguageContext = createContext<{
   t: (key) => key,
 });
 
-export const LanguageProvider: React.FC<{children: ReactNode}> = ({ children }) => {
+export const LanguageProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [language, setLanguage] = useState<Language>('zh');
 
   const t = (key: string): string => {
