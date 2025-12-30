@@ -2,7 +2,6 @@
 // External system integration
 
 use crate::models::{SubmitResult, Comment};
-use std::collections::HashMap;
 
 pub struct GitLabClient {
     base_url: String,

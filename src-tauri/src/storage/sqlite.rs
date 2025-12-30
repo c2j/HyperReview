@@ -121,7 +121,104 @@ impl Database {
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS review_guides (
+                id TEXT PRIMARY KEY,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                reference_url TEXT,
+                applicable_extensions TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_review_guides_category ON review_guides(category);
+            CREATE INDEX IF NOT EXISTS idx_review_guides_severity ON review_guides(severity);
+
+            -- Local Tasks table
+            CREATE TABLE IF NOT EXISTS local_tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL,
+                priority INTEGER DEFAULT 1,
+                assignee TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                due_date TEXT,
+                task_type TEXT,
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_local_tasks_status ON local_tasks(status);
+            CREATE INDEX IF NOT EXISTS idx_local_tasks_type ON local_tasks(task_type);
+
+            -- Local Task Files table
+            CREATE TABLE IF NOT EXISTS local_task_files (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                review_status TEXT,
+                review_comment TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES local_tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_local_task_files_task_id ON local_task_files(task_id);
+
+            -- File Review Comments table - stores all review comments for each file
+            CREATE TABLE IF NOT EXISTS file_review_comments (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                review_status TEXT NOT NULL,
+                review_comment TEXT NOT NULL,
+                submitted_by TEXT,
+                submitted_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES local_tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_file_review_comments_task_id ON file_review_comments(task_id);
+            CREATE INDEX IF NOT EXISTS idx_file_review_comments_file_id ON file_review_comments(file_id);
         ")?;
+
+        // Migration: Add missing columns to existing tables
+        // For local_task_files table, add review_status and review_comment if they don't exist
+        // Use a simpler check that queries the count directly
+        let check_column = |col_name: &str| -> rusqlite::Result<bool> {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('local_task_files') WHERE name='{}'",
+                col_name
+            ))?;
+            let count: i64 = stmt.query_row([], |row| row.get(0))?;
+            Ok(count > 0)
+        };
+
+        if !check_column("review_status")? {
+            log::info!("Adding review_status column to local_task_files table");
+            self.conn.execute(
+                "ALTER TABLE local_task_files ADD COLUMN review_status TEXT",
+                []
+            )?;
+        }
+
+        if !check_column("review_comment")? {
+            log::info!("Adding review_comment column to local_task_files table");
+            self.conn.execute(
+                "ALTER TABLE local_task_files ADD COLUMN review_comment TEXT",
+                []
+            )?;
+        }
+
+        // Create the index after ensuring the column exists
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_local_task_files_review_status ON local_task_files(review_status)",
+            []
+        )?;
 
         Ok(())
     }
@@ -383,6 +480,8 @@ impl Database {
                 updated_at: row.get("updated_at")?,
                 due_date: row.get("due_date")?,
                 metadata,
+                task_type: None,
+                files: vec![],
             })
         })?;
 
@@ -564,5 +663,459 @@ impl Database {
             [tag_id],
         )?;
         Ok(())
+    }
+
+    // ===== Review Guide Operations =====
+
+    /// Store a review guide
+    pub fn store_review_guide(&self, guide: &crate::models::ReviewGuideItem) -> Result<(), rusqlite::Error> {
+        log::info!("Storing review guide: {}", guide.id);
+
+        let extensions_json = serde_json::to_string(&guide.applicable_extensions).unwrap_or_else(|_| "[]".to_string());
+        let category_str = format!("{:?}", guide.category);
+        let severity_str = format!("{:?}", guide.severity);
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO review_guides (id, category, title, description, severity, reference_url, applicable_extensions, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            (
+                &guide.id,
+                &category_str,
+                &guide.title,
+                &guide.description,
+                &severity_str,
+                guide.reference_url.as_deref(),
+                &extensions_json,
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            ),
+        )?;
+
+        Ok(())
+    }
+
+    /// Get all review guides
+    pub fn get_review_guides(&self) -> Result<Vec<crate::models::ReviewGuideItem>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, category, title, description, severity, reference_url, applicable_extensions
+             FROM review_guides
+             ORDER BY category ASC, severity DESC, title ASC"
+        )?;
+
+        let guide_iter = stmt.query_map([], |row| {
+            let extensions_str: String = row.get("applicable_extensions")?;
+            let applicable_extensions: Vec<String> = serde_json::from_str(&extensions_str).unwrap_or_default();
+
+            Ok(crate::models::ReviewGuideItem {
+                id: row.get("id")?,
+                // 直接使用字符串类别，支持中文
+                category: row.get::<_, String>("category")?,
+                title: row.get("title")?,
+                description: row.get("description")?,
+                severity: match row.get::<_, String>("severity")?.as_str() {
+                    "High" => crate::models::ReviewGuideSeverity::High,
+                    "Medium" => crate::models::ReviewGuideSeverity::Medium,
+                    "Low" => crate::models::ReviewGuideSeverity::Low,
+                    _ => crate::models::ReviewGuideSeverity::Low,
+                },
+                reference_url: row.get("reference_url")?,
+                applicable_extensions,
+            })
+        })?;
+
+        let mut guides = Vec::new();
+        for guide_result in guide_iter {
+            guides.push(guide_result?);
+        }
+
+        Ok(guides)
+    }
+
+    /// Delete a review guide
+    pub fn delete_review_guide(&self, guide_id: &str) -> Result<(), rusqlite::Error> {
+        log::info!("Deleting review guide: {}", guide_id);
+        self.conn.execute("DELETE FROM review_guides WHERE id = ?1", [guide_id])?;
+        Ok(())
+    }
+
+    // ===== Local Task Operations =====
+
+    /// Create a new local task
+    pub fn create_local_task(
+        &self,
+        title: &str,
+        task_type: &str,
+        file_paths: &[String],
+    ) -> Result<crate::models::Task, rusqlite::Error> {
+        log::info!("Creating local task: {} with {} files", title, file_paths.len());
+
+        let task_id = uuid::Uuid::new_v4().to_string();
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        // Insert task
+        self.conn.execute(
+            "INSERT INTO local_tasks (id, title, status, priority, created_at, updated_at, task_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                &task_id,
+                title,
+                "active",
+                1i32,
+                &timestamp,
+                &timestamp,
+                task_type,
+            ),
+        )?;
+
+        // Insert files
+        for file_path in file_paths {
+            let file_id = uuid::Uuid::new_v4().to_string();
+            let file_name = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown");
+
+            self.conn.execute(
+                "INSERT INTO local_task_files (id, task_id, path, name, status, review_status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (
+                    &file_id,
+                    &task_id,
+                    file_path,
+                    file_name,
+                    "modified",
+                    "pending",  // Default review status
+                    &timestamp,
+                ),
+            )?;
+        }
+
+        // Return the created task with files
+        Ok(crate::models::Task {
+            id: task_id.clone(),
+            title: title.to_string(),
+            description: None,
+            status: crate::models::TaskStatus::Active,
+            priority: 1,
+            assignee: None,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            due_date: None,
+            metadata: std::collections::HashMap::new(),
+            task_type: match task_type {
+                "code" => Some(crate::models::TaskType::Code),
+                "sql" => Some(crate::models::TaskType::Sql),
+                "security" => Some(crate::models::TaskType::Security),
+                _ => None,
+            },
+            files: file_paths
+                .iter()
+                .enumerate()
+                .map(|(i, path)| {
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("Unknown")
+                        .to_string();
+                    crate::models::TaskFile {
+                        id: format!("{}-{}", task_id, i),
+                        path: path.clone(),
+                        name,
+                        status: crate::models::FileStatus::Modified,
+                        review_status: Some(crate::models::FileReviewStatus::Pending),
+                        review_comment: None,
+                    }
+                })
+                .collect(),
+        })
+    }
+
+    /// Get all local tasks
+    pub fn get_local_tasks(&self) -> Result<Vec<crate::models::Task>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, status, task_type FROM local_tasks
+             ORDER BY created_at DESC"
+        )?;
+
+        let task_iter = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>("id")?,
+                row.get::<_, String>("title")?,
+                row.get::<_, String>("status")?,
+                row.get::<_, Option<String>>("task_type")?,
+            ))
+        })?;
+
+        let mut tasks = Vec::new();
+        for task_result in task_iter {
+            let (task_id, title, status, task_type) = task_result?;
+
+            // Get files for this task
+            let mut file_stmt = self.conn.prepare(
+                "SELECT id, path, name, status, review_status, review_comment FROM local_task_files WHERE task_id = ?1"
+            )?;
+
+            let files: Vec<crate::models::TaskFile> = file_stmt
+                .query_map([&task_id], |row| {
+                    let review_status_str: Option<String> = row.get("review_status")?;
+                    Ok(crate::models::TaskFile {
+                        id: row.get("id")?,
+                        path: row.get("path")?,
+                        name: row.get("name")?,
+                        status: match row.get::<_, String>("status")?.as_str() {
+                            "modified" => crate::models::FileStatus::Modified,
+                            "added" => crate::models::FileStatus::Added,
+                            "deleted" => crate::models::FileStatus::Deleted,
+                            _ => crate::models::FileStatus::Modified,
+                        },
+                        review_status: review_status_str.and_then(|s| match s.as_str() {
+                            "pending" => Some(crate::models::FileReviewStatus::Pending),
+                            "approved" => Some(crate::models::FileReviewStatus::Approved),
+                            "concern" => Some(crate::models::FileReviewStatus::Concern),
+                            "must_change" => Some(crate::models::FileReviewStatus::MustChange),
+                            "question" => Some(crate::models::FileReviewStatus::Question),
+                            _ => Some(crate::models::FileReviewStatus::Pending),
+                        }),
+                        review_comment: row.get("review_comment")?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            tasks.push(crate::models::Task {
+                id: task_id.clone(),
+                title,
+                description: None,
+                status: match status.as_str() {
+                    "active" => crate::models::TaskStatus::Active,
+                    "pending" => crate::models::TaskStatus::Pending,
+                    "completed" => crate::models::TaskStatus::Completed,
+                    "blocked" => crate::models::TaskStatus::Blocked,
+                    _ => crate::models::TaskStatus::Pending,
+                },
+                priority: 1,
+                assignee: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+                due_date: None,
+                metadata: std::collections::HashMap::new(),
+                task_type: match task_type.as_deref() {
+                    Some("code") => Some(crate::models::TaskType::Code),
+                    Some("sql") => Some(crate::models::TaskType::Sql),
+                    Some("security") => Some(crate::models::TaskType::Security),
+                    _ => None,
+                },
+                files,
+            });
+        }
+
+        Ok(tasks)
+    }
+
+    /// Delete a local task
+    pub fn delete_local_task(&self, task_id: &str) -> Result<(), rusqlite::Error> {
+        log::info!("Deleting local task: {}", task_id);
+        self.conn.execute("DELETE FROM local_tasks WHERE id = ?1", [task_id])?;
+        // Files will be deleted automatically due to FOREIGN KEY
+        Ok(())
+    }
+
+    /// Update file review status
+    pub fn update_file_review_status(
+        &self,
+        task_id: &str,
+        file_id: &str,
+        review_status: &str,
+        review_comment: Option<&str>,
+        submitted_by: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        log::info!("Updating review status for file {} in task {} to {}", file_id, task_id, review_status);
+
+        // Update the current status in local_task_files
+        self.conn.execute(
+            "UPDATE local_task_files
+             SET review_status = ?1, review_comment = ?2
+             WHERE id = ?3 AND task_id = ?4",
+            (review_status, review_comment.unwrap_or(""), file_id, task_id),
+        )?;
+
+        // Also insert into comment history
+        let comment_id = uuid::Uuid::new_v4().to_string();
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        self.conn.execute(
+            "INSERT INTO file_review_comments (id, task_id, file_id, review_status, review_comment, submitted_by, submitted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                &comment_id,
+                task_id,
+                file_id,
+                review_status,
+                review_comment.unwrap_or(""),
+                submitted_by.unwrap_or("Anonymous"),
+                &timestamp,
+            ),
+        )?;
+
+        Ok(())
+    }
+
+    /// Get all review comments for a file
+    pub fn get_file_review_comments(
+        &self,
+        task_id: &str,
+        file_id: &str,
+    ) -> Result<Vec<crate::models::FileReviewComment>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, task_id, file_id, review_status, review_comment, submitted_by, submitted_at
+             FROM file_review_comments
+             WHERE task_id = ?1 AND file_id = ?2
+             ORDER BY submitted_at ASC"
+        )?;
+
+        let comment_iter = stmt.query_map([task_id, file_id], |row| {
+            Ok(crate::models::FileReviewComment {
+                id: row.get("id")?,
+                task_id: row.get("task_id")?,
+                file_id: row.get("file_id")?,
+                review_status: row.get("review_status")?,
+                review_comment: row.get("review_comment")?,
+                submitted_by: row.get("submitted_by")?,
+                submitted_at: row.get("submitted_at")?,
+            })
+        })?;
+
+        let mut comments = Vec::new();
+        for comment_result in comment_iter {
+            comments.push(comment_result?);
+        }
+
+        Ok(comments)
+    }
+
+    /// Mark task as completed
+    pub fn mark_task_completed(&self, task_id: &str) -> Result<(), rusqlite::Error> {
+        log::info!("Marking task {} as completed", task_id);
+        self.conn.execute(
+            "UPDATE local_tasks SET status = 'completed' WHERE id = ?1",
+            [task_id],
+        )?;
+        Ok(())
+    }
+
+    /// Export task review data as CSV
+    /// Returns CSV string with task info, file review status, and all review comments
+    pub fn export_task_review_csv(&self, task_id: &str) -> Result<String, rusqlite::Error> {
+        log::info!("Exporting task review data as CSV: {}", task_id);
+
+        // Get task info
+        let mut stmt = self.conn.prepare(
+            "SELECT title, status, task_type, created_at FROM local_tasks WHERE id = ?1"
+        )?;
+        let task_result = stmt.query_row([&task_id], |row| {
+            Ok((
+                row.get::<_, String>("title")?,
+                row.get::<_, String>("status")?,
+                row.get::<_, Option<String>>("task_type")?,
+                row.get::<_, String>("created_at")?,
+            ))
+        });
+
+        let (task_title, task_status, task_type, task_created) = match task_result {
+            Ok(t) => t,
+            Err(_) => return Err(rusqlite::Error::QueryReturnedNoRows),
+        };
+
+        // Build CSV header
+        let mut csv = String::from("\u{FEFF}"); // UTF-8 BOM for Excel compatibility
+        csv.push_str("Task ID,Task Title,Task Type,Task Status,Created At,File ID,File Path,File Name,File Status,Review Status,Review Comment,Comment ID,Comment Status,Comment Author,Comment Date\n");
+
+        // Get files for this task
+        let mut file_stmt = self.conn.prepare(
+            "SELECT id, path, name, status, review_status, review_comment FROM local_task_files WHERE task_id = ?1"
+        )?;
+
+        let file_iter = file_stmt.query_map([&task_id], |row| {
+            Ok((
+                row.get::<_, String>("id")?,
+                row.get::<_, String>("path")?,
+                row.get::<_, String>("name")?,
+                row.get::<_, String>("status")?,
+                row.get::<_, Option<String>>("review_status")?,
+                row.get::<_, Option<String>>("review_comment")?,
+            ))
+        })?;
+
+        // CSV writer helper - escapes fields with commas or quotes
+        let escape_csv = |s: &str| -> String {
+            if s.contains(',') || s.contains('"') || s.contains('\n') {
+                format!("\"{}\"", s.replace("\"", "\"\""))
+            } else {
+                s.to_string()
+            }
+        };
+
+        for file_result in file_iter {
+            let (file_id, file_path, file_name, file_status, review_status, review_comment) = file_result?;
+
+            // Row with current review status
+            let row = format!(
+                "{},{},{},{},{},{},{},{},{},{},{},,,,,\n",
+                escape_csv(&task_id),
+                escape_csv(&task_title),
+                escape_csv(&task_type.as_deref().unwrap_or("")),
+                escape_csv(&task_status),
+                escape_csv(&task_created),
+                escape_csv(&file_id),
+                escape_csv(&file_path),
+                escape_csv(&file_name),
+                escape_csv(&file_status),
+                escape_csv(&review_status.as_deref().unwrap_or("pending")),
+                escape_csv(&review_comment.as_deref().unwrap_or("")),
+            );
+            csv.push_str(&row);
+
+            // Get all historical review comments for this file
+            let mut comment_stmt = self.conn.prepare(
+                "SELECT id, review_status, review_comment, submitted_by, submitted_at
+                 FROM file_review_comments
+                 WHERE task_id = ?1 AND file_id = ?2
+                 ORDER BY submitted_at ASC"
+            )?;
+
+            let comment_iter = comment_stmt.query_map([&task_id, file_id.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>("id")?,
+                    row.get::<_, String>("review_status")?,
+                    row.get::<_, String>("review_comment")?,
+                    row.get::<_, String>("submitted_by")?,
+                    row.get::<_, String>("submitted_at")?,
+                ))
+            })?;
+
+            for comment_result in comment_iter {
+                let (comment_id, comment_status, comment_text, comment_author, comment_date) = comment_result?;
+                let comment_row = format!(
+                    "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},\n",
+                    escape_csv(&task_id),
+                    escape_csv(&task_title),
+                    escape_csv(&task_type.as_deref().unwrap_or("")),
+                    escape_csv(&task_status),
+                    escape_csv(&task_created),
+                    escape_csv(&file_id),
+                    escape_csv(&file_path),
+                    escape_csv(&file_name),
+                    escape_csv(&file_status),
+                    "", // current review status - empty for comment rows
+                    "", // current review comment - empty for comment rows
+                    escape_csv(&comment_id),
+                    escape_csv(&comment_status),
+                    escape_csv(&comment_author),
+                    escape_csv(&comment_date),
+                );
+                csv.push_str(&comment_row);
+            }
+        }
+
+        Ok(csv)
     }
 }

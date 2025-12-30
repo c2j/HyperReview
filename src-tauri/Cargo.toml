@@ -20,7 +20,7 @@ tauri-build = { version = "1.5.4", features = [] }
 
 [dependencies]
 # Tauri
-tauri = { version = "1.8", features = [  "dialog-open", "dialog-save", "fs-read-file", "fs-create-dir", "fs-remove-dir", "fs-rename-file", "fs-remove-file", "fs-read-dir", "fs-write-file", "fs-copy-file", "fs-exists", "shell-open"] }
+tauri = { version = "1.8", features = [  "dialog-open", "dialog-save", "fs-read-file", "fs-create-dir", "fs-remove-dir", "fs-rename-file", "fs-remove-file", "fs-read-dir", "fs-write-file", "fs-copy-file", "fs-exists", "shell-open", "devtools"] }
 # tauri-plugin-opener = "1"
 # tauri-plugin-dialog = "1"
 
@@ -43,7 +43,7 @@ tree-sitter-sql = "0.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "blocking"] }
 
 # Concurrency
 rayon = "1.8"
@@ -77,11 +77,17 @@ lru = "0.12"
 # System info
 sys-info = "0.9"
 
+# Directory utilities
+dirs = "5.0"
+
 # Encryption
 base64 = "0.22"
 
 # Random
 rand = "0.8"
+
+# Testing
+tempfile = "3.8"
 
 # Security: Force upgrade of idna to fix RUSTSEC-2024-0421
 idna = "1.0.3"

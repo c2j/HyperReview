@@ -92,12 +92,19 @@ const VirtualDiffViewer: React.FC<VirtualDiffViewerProps> = ({
   // Ensure diffLines is always an array
   const safeDiffLines = Array.isArray(diffLines) ? diffLines : [];
 
-  // Filter lines based on view mode
+  // Filter lines based on view mode (but don't filter file content)
   const filteredLines = safeDiffLines.filter(line => {
+    // For file content, show all lines regardless of view mode
+    if (isFileContent) return true;
+    
+    // For diffs, apply view mode filtering
     if (viewMode === 'old' && line.line_type === 'Added') return false;
     if (viewMode === 'new' && line.line_type === 'Removed') return false;
     return true;
   });
+
+  // Debug logging
+  console.log('[VirtualDiffViewer] isFileContent:', isFileContent, 'diffLines length:', diffLines?.length, 'filteredLines length:', filteredLines.length);
 
   // Don't render if no lines
   if (!filteredLines || filteredLines.length === 0) {

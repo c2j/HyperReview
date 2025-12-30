@@ -19,7 +19,7 @@ export interface FileNode {
   name: string;
   path: string;
   type: 'file' | 'folder';
-  status: 'modified' | 'added' | 'deleted';
+  status: 'modified' | 'added' | 'deleted' | 'none';
   children?: FileNode[];
   stats?: {
     added: number;

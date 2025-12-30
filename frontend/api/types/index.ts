@@ -11,3 +11,5 @@ export * from './search';
 export * from './tag';
 export * from './template';
 export * from './quality-gate';
+export * from './right-panel';
+export * from './file-tree';

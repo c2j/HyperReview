@@ -1,30 +1,9 @@
-export interface HeatmapItem {
+export interface ReviewGuideItem {
   id: string;
-  name: string;
-  impact: 'high' | 'medium' | 'low';
-}
-
-export interface BlameInfo {
-  author: string;
-  avatar: string; // Initial or URL
-  time: string;
-  prName: string;
-  reviewer: string;
-  reviewerStatus: string;
-  comment: string;
-}
-
-export interface ReviewStats {
-  reviewedCount: number;
-  totalCount: number;
-  severeCount: number;
-  warningCount: number;
-  pendingCount: number;
-  estimatedTime: string;
-}
-
-export interface ChecklistItem {
-  id: string;
-  text: string;
-  checked: boolean;
+  category: string; // 支持中文类别，如 "安全性", "性能优化", "代码规范", "通用原则" 等
+  title: string;
+  description: string;
+  severity: 'high' | 'medium' | 'low';
+  referenceUrl?: string;
+  applicableExtensions: string[];
 }
