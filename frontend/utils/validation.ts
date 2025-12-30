@@ -19,6 +19,37 @@ import type {
   Comment
 } from '../api/types';
 
+import {
+  GerritInstance,
+  GerritChange,
+  GerritComment,
+  ValidationError,
+  ConnectionStatus,
+  ChangeStatus,
+  ImportStatus,
+  ConflictStatus,
+  CommentSide,
+  CommentSyncStatus,
+  ReviewStatus,
+  NotifyHandling,
+  FileChangeType,
+  FileStatus,
+  PatchSetKind,
+  SyncType,
+  SyncOperationStatus,
+  OperationType,
+  OperationPriority,
+  OperationStatus,
+  QueryType,
+  QueryStatus,
+  ImportMode,
+  BatchMode,
+  ConflictType,
+  ImportStage,
+  DiffLineType,
+  GerritErrorCode
+} from '../api/types/gerrit';
+
 // ============================================================================
 // Type Guards
 // ============================================================================

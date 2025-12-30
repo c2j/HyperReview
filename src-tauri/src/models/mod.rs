@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 pub mod task;
+pub mod gerrit;
 
 /// Repository Entity
 #[derive(Debug, Serialize, Deserialize, Clone)]
