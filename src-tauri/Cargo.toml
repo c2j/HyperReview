@@ -86,6 +86,9 @@ base64 = "0.22"
 # Random
 rand = "0.8"
 
+# Testing
+tempfile = "3.8"
+
 # Security: Force upgrade of idna to fix RUSTSEC-2024-0421
 idna = "1.0.3"
 

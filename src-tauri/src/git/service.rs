@@ -546,10 +546,25 @@ impl GitService {
                         ("none".to_string(), None)
                     } else {
                         // File modified - different blob IDs
-                        // Don't show line stats for modified files since simple line count is inaccurate
-                        // User can click to see actual diff in the diff view
                         log::debug!("File MODIFIED (different blob): {} - base_id: {}, head_id: {}", full_path, base_entry.id(), entry.id());
-                        ("modified".to_string(), None)
+                        
+                        // For modified files, provide basic stats based on file size change
+                        let old_size = if let Ok(blob) = repo.find_blob(base_entry.id()) {
+                            blob.content().len() as u64
+                        } else { 0 };
+                        let new_size = if let Ok(blob) = repo.find_blob(entry.id()) {
+                            blob.content().len() as u64
+                        } else { 0 };
+                        let size_change = if new_size > old_size { 
+                            ((new_size - old_size) / 50).min(100) as u32 // Estimated added lines
+                        } else { 
+                            ((old_size - new_size) / 50).min(100) as u32 // Estimated removed lines  
+                        };
+                        
+                        ("modified".to_string(), Some(crate::models::FileStats {
+                            added: size_change,
+                            removed: size_change,
+                        }))
                     }
                 } else {
                     // File is new (only exists in head)

@@ -24,9 +24,44 @@ impl DiffEngine {
         old_commit: Option<&str>,
         new_commit: Option<&str>,
     ) -> Result<Vec<DiffLine>, HyperReviewError> {
+        log::info!("=== DIFF ENGINE DEBUG ===");
         log::info!("Computing diff for file: {}", file_path);
+        log::info!("Old commit: {:?}, New commit: {:?}", old_commit, new_commit);
+        log::info!("Repository workdir: {:?}", self.repository.workdir());
 
-        // Check if file is binary
+        // Normalize file path - convert absolute to relative path for git operations
+        let normalized_path = if file_path.starts_with('/') {
+            // Extract relative path from absolute path
+            if let Some(repo_path) = self.repository.workdir().and_then(|p| p.to_str()) {
+                log::debug!("Repository workdir: {}", repo_path);
+                log::debug!("Original file path: {}", file_path);
+                
+                // Handle trailing slash in repo_path
+                let repo_path_clean = repo_path.trim_end_matches('/');
+                log::debug!("Repository workdir (clean): {}", repo_path_clean);
+                
+                let stripped = if file_path.starts_with(repo_path) {
+                    file_path.strip_prefix(repo_path).unwrap_or(file_path)
+                } else if file_path.starts_with(repo_path_clean) {
+                    file_path.strip_prefix(repo_path_clean).unwrap_or(file_path)
+                } else {
+                    file_path
+                };
+                
+                log::debug!("Stripped path: {}", stripped);
+                let normalized = stripped.trim_start_matches('/');
+                log::debug!("Final normalized path: {}", normalized);
+                normalized
+            } else {
+                log::debug!("Could not get repository workdir, using original path");
+                file_path
+            }
+        } else {
+            log::debug!("Path is already relative: {}", file_path);
+            file_path
+        };
+
+        // Check if file is binary (using original path for extension check)
         if self.is_binary_file(file_path) {
             return Err(HyperReviewError::Other {
                 message: "Cannot compute diff for binary file".to_string(),
@@ -36,25 +71,32 @@ impl DiffEngine {
         // Get the tree for old commit and new commit
         let old_tree = match old_commit {
             Some(commit) => {
-                let commit_obj = self.repository.find_commit(
-                    self.repository.revparse_single(commit)?
-                        .id()
-                )?;
-                Some(commit_obj.tree()?)
+                log::debug!("Resolving old commit: {}", commit);
+                let object = self.repository.revparse_single(commit)?;
+                log::debug!("Old commit object ID: {}", object.id());
+                let commit_obj = self.repository.find_commit(object.id())?;
+                log::debug!("Found old commit: {}", commit_obj.id());
+                let tree = commit_obj.tree()?;
+                log::debug!("Got old tree: {}", tree.id());
+                Some(tree)
             }
             None => None,
         };
 
         let new_tree = match new_commit {
             Some(commit) => {
-                let commit_obj = self.repository.find_commit(
-                    self.repository.revparse_single(commit)?
-                        .id()
-                )?;
-                Some(commit_obj.tree()?)
+                log::debug!("Resolving new commit: {}", commit);
+                let object = self.repository.revparse_single(commit)?;
+                log::debug!("New commit object ID: {}", object.id());
+                let commit_obj = self.repository.find_commit(object.id())?;
+                log::debug!("Found new commit: {}", commit_obj.id());
+                let tree = commit_obj.tree()?;
+                log::debug!("Got new tree: {}", tree.id());
+                Some(tree)
             }
             None => {
                 // Use working directory if no new commit specified - just use None
+                log::debug!("No new commit specified, will use working directory");
                 None
             }
         };
@@ -63,9 +105,12 @@ impl DiffEngine {
         let diff = match (old_tree, new_tree) {
             (Some(old), Some(new)) => {
                 // Diff between two commits
+                log::debug!("Creating diff between two trees with pathspec: {}", normalized_path);
                 let mut diff_options = git2::DiffOptions::new();
-                diff_options.pathspec(file_path);
-                self.repository.diff_tree_to_tree(Some(&old), Some(&new), Some(&mut diff_options))?
+                diff_options.pathspec(normalized_path);  // Use normalized path for pathspec
+                let diff_result = self.repository.diff_tree_to_tree(Some(&old), Some(&new), Some(&mut diff_options))?;
+                log::debug!("Diff created successfully");
+                diff_result
             }
             (Some(old), None) => {
                 // Diff between a commit and working directory
@@ -84,12 +129,13 @@ impl DiffEngine {
             }
             (None, None) => {
                 // Both are None - return empty diff
+                log::warn!("Both old and new commits are None, returning empty diff");
                 return Ok(Vec::new());
             }
         };
 
-        // Parse diff into lines
-        self.parse_diff(diff, file_path)
+        // Parse diff into lines (use normalized path for parsing)
+        self.parse_diff(diff, normalized_path)
     }
 
     /// Parse git diff into structured DiffLine objects for a specific file
@@ -109,7 +155,7 @@ impl DiffEngine {
 
         // Log the patch content for debugging
         let patch_str = std::str::from_utf8(&patch).unwrap_or("");
-        log::debug!("Patch content for {}:\n{}", file_path, patch_str);
+        log::info!("Patch content for {}:\n{}", file_path, patch_str);
 
         let patch_reader = BufReader::new(patch.as_slice());
 
@@ -123,14 +169,26 @@ impl DiffEngine {
                 // Extract filenames from diff header
                 // Format: diff --git a/old_path b/new_path
                 let parts: Vec<&str> = line.split_whitespace().collect();
-                if parts.len() >= 3 {
-                    let old_file = parts[1].strip_prefix("a/").unwrap_or(parts[1]);
-                    let new_file = parts[2].strip_prefix("b/").unwrap_or(parts[2]);
-
+                
+                // Find parts that start with 'a/' and 'b/'
+                let mut old_file: Option<&str> = None;
+                let mut new_file: Option<&str> = None;
+                
+                for part in &parts {
+                    if part.starts_with("a/") {
+                        old_file = Some(part.strip_prefix("a/").unwrap_or(part));
+                    } else if part.starts_with("b/") {
+                        new_file = Some(part.strip_prefix("b/").unwrap_or(part));
+                    }
+                }
+                
+                if let (Some(old), Some(new)) = (old_file, new_file) {
                     // Check if this diff is for our target file
-                    in_target_file = old_file == file_path || new_file == file_path;
+                    in_target_file = old == file_path || new == file_path;
                     log::debug!("Diff file check: old_file={}, new_file={}, target={}, match={}",
-                               old_file, new_file, file_path, in_target_file);
+                               old, new, file_path, in_target_file);
+                } else {
+                    log::debug!("Could not extract file paths from diff header: {}", line);
                 }
                 continue;
             }
@@ -248,6 +306,38 @@ impl DiffEngine {
                 }
             }
             None => false, // No extension, assume text file
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use git2::Repository;
+
+    #[test]
+    fn test_path_normalization() {
+        // Open the repository (this test assumes we're in a git repo)
+        if let Ok(repo) = Repository::open(".") {
+            let diff_engine = DiffEngine::new(repo);
+            
+            // Test absolute path normalization
+            let absolute_path = "/some/absolute/path/to/file.ts";
+            let normalized = if absolute_path.starts_with('/') {
+                // Extract relative path from absolute path
+                if let Some(repo_path) = diff_engine.repository.workdir().and_then(|p| p.to_str()) {
+                    absolute_path.strip_prefix(repo_path).unwrap_or(absolute_path).trim_start_matches('/')
+                } else {
+                    absolute_path
+                }
+            } else {
+                absolute_path
+            };
+            
+            // The normalized path should be relative
+            println!("Absolute path: {}", absolute_path);
+            println!("Normalized path: {}", normalized);
+            assert!(!normalized.starts_with('/'));
         }
     }
 }

@@ -1,10 +1,7 @@
-use crate::models::task::{LocalTask, CreateTaskRequest, TaskSummary, TaskStatus, TaskItem, Comment as TaskComment, LineRange, TaskSeverity};
+use crate::models::task::{LocalTask, CreateTaskRequest, TaskSummary, TaskStatus, Comment as TaskComment};
 use crate::storage::task_store::TaskStore;
 use crate::commands::text_parser;
 use crate::git::repo_manager::RepoManager;
-use crate::remote::gerrit_client::GerritClient;
-use crate::remote::codearts_client::CodeArtsClient;
-use crate::remote::custom_client::CustomApiClient;
 use tauri::State;
 use uuid::Uuid;
 use chrono::Utc;

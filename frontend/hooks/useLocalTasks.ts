@@ -1,19 +1,19 @@
 import { invoke } from '@tauri-apps/api/tauri';
-import type { LocalTask, TaskItem, TaskSummary } from '@types/task';
+import type { LocalTask, TaskSummary } from '../types/task';
 
 export function useLocalTasks() {
   const createTask = async (
     name: string,
-    repoPath: string,
-    baseRef: string,
-    itemsText: string,
+    repo_path: string,
+    base_ref: string,
+    items_text: string,
   ): Promise<LocalTask> => {
     return await invoke<LocalTask>('create_task', {
       payload: {
         name,
-        repoPath,
-        baseRef,
-        itemsText,
+        repo_path,
+        base_ref,
+        items_text,
       },
     });
   };

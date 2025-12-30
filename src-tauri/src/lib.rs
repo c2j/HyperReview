@@ -13,6 +13,7 @@ pub mod errors;
 pub mod git {
     pub mod service;
     pub mod diff;
+    pub mod complete_diff;
     pub mod repo_manager;
 }
 
@@ -22,6 +23,7 @@ pub mod analysis {
     pub mod checklist;
     pub mod stats;
     pub mod grammars;
+    pub mod diff_analysis;
 }
 
 pub mod storage {
@@ -129,6 +131,7 @@ pub fn run() {
 
             // Review workflow commands
             commands::general::get_file_diff,
+            commands::general::get_complete_file_diff,
             commands::general::add_comment,
             commands::general::update_comment,
             commands::general::delete_comment,
@@ -144,6 +147,7 @@ pub fn run() {
             commands::general::get_checklist,
             commands::general::get_blame,
             commands::general::read_file_content,
+
             commands::general::analyze_complexity,
             commands::general::scan_security,
             commands::general::get_review_guide,

@@ -1,7 +1,7 @@
 // Generic custom API client for external review systems
 // Allows integration with custom REST APIs for review submission
 
-use crate::models::{SubmitResult, Comment};
+use crate::models::SubmitResult;
 use serde_json::Value;
 
 pub struct CustomApiClient {

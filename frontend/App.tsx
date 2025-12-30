@@ -43,6 +43,15 @@ const App: React.FC = () => {
     return parts.length > 1 ? `.${parts.pop()}` : '';
   }, [activeFilePath]);
 
+  // Debug: Log state changes
+  useEffect(() => {
+    console.log('[App] selectedFile changed:', selectedFile);
+  }, [selectedFile]);
+
+  useEffect(() => {
+    console.log('[App] activeFilePath changed:', activeFilePath);
+  }, [activeFilePath]);
+
   // Layout State
   const [leftWidth, setLeftWidth] = useState(260);
   const [rightWidth, setRightWidth] = useState(300);
@@ -300,6 +309,7 @@ const App: React.FC = () => {
 
     if (msg.includes('File selected: ')) {
       const filePath = msg.replace('File selected: ', '');
+      console.log('[App] File selected, setting paths:', filePath);
       setActiveFilePath(filePath);
       setSelectedFile(filePath);
       return;
@@ -412,6 +422,7 @@ const App: React.FC = () => {
               repoRefreshKey={repoRefreshKey}
               onSelectFile={setSelectedFile}
               selectedFile={selectedFile}
+              diffContext={diffContext}
             />
           </div>
         )}

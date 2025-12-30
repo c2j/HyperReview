@@ -69,8 +69,9 @@ const CreateLocalTaskModal: React.FC<CreateLocalTaskModalProps> = ({
     <Modal isOpen={isOpen} onClose={onClose} title="Create Local Task">
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className="block text-sm font-medium mb-1 text-editor-fg">Task Name</label>
+          <label htmlFor="task-name" className="block text-sm font-medium mb-1 text-editor-fg">Task Name</label>
           <input
+            id="task-name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -81,8 +82,9 @@ const CreateLocalTaskModal: React.FC<CreateLocalTaskModalProps> = ({
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1 text-editor-fg">Repository Path</label>
+          <label htmlFor="repo-path" className="block text-sm font-medium mb-1 text-editor-fg">Repository Path</label>
           <input
+            id="repo-path"
             type="text"
             value={repoPath}
             onChange={(e) => setRepoPath(e.target.value)}
@@ -93,8 +95,9 @@ const CreateLocalTaskModal: React.FC<CreateLocalTaskModalProps> = ({
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1 text-editor-fg">Base Reference</label>
+          <label htmlFor="base-ref" className="block text-sm font-medium mb-1 text-editor-fg">Base Reference</label>
           <input
+            id="base-ref"
             type="text"
             value={baseRef}
             onChange={(e) => setBaseRef(e.target.value)}
@@ -104,10 +107,11 @@ const CreateLocalTaskModal: React.FC<CreateLocalTaskModalProps> = ({
         </div>
 
         <div>
-          <label className="block text-sm font-medium mb-1 text-editor-fg">
+          <label htmlFor="file-list" className="block text-sm font-medium mb-1 text-editor-fg">
             File List (one per line, tab or double-space for comments)
           </label>
           <textarea
+            id="file-list"
             value={itemsText}
             onChange={(e) => handleItemsTextChange(e.target.value)}
             rows={8}

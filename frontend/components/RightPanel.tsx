@@ -41,6 +41,7 @@ interface RightPanelProps {
   repoRefreshKey?: number;
   onSelectFile?: (path: string) => void;
   selectedFile?: string | null;
+  diffContext?: { base: string; head: string };
 }
 
 const RightPanel: React.FC<RightPanelProps> = ({
@@ -49,6 +50,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
   repoRefreshKey,
   onSelectFile,
   selectedFile,
+  diffContext,
 }) => {
   const { t } = useTranslation();
   const { getHeatmap, getBlame, getReviewStats, getChecklist, getReviewGuide } = useApiClient();
@@ -75,7 +77,10 @@ const RightPanel: React.FC<RightPanelProps> = ({
 
     switch (activeTab) {
       case Tab.HEATMAP:
-        promise = getHeatmap().then(setHeatmapData);
+        // Use diff context branches if available for diff-based heatmap
+        const baseBranch = diffContext?.base;
+        const headBranch = diffContext?.head;
+        promise = getHeatmap(baseBranch, headBranch).then(setHeatmapData);
         break;
       case Tab.BLAME:
         promise = getBlame('current-file').then(setBlameData);
@@ -98,7 +103,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
     }
 
     promise.catch(console.error).finally(() => setLoading(false));
-  }, [activeTab, repoRefreshKey]); // 依赖 activeTab 和 repoRefreshKey
+  }, [activeTab, repoRefreshKey, diffContext]); // 依赖 activeTab、repoRefreshKey 和 diffContext
 
   // Filtered Guide Items Logic
   const filteredGuideItems = useMemo(() => {

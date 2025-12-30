@@ -28,6 +28,7 @@ import {
   useGetBranches,
   useLoadRepo,
   useGetFileDiff,
+  useGetCompleteFileDiff,
   useAddComment,
   useUpdateComment,
   useDeleteComment,
@@ -42,6 +43,7 @@ import {
   useGetChecklist,
   useGetBlame,
   useReadFileContent,
+  useReadFileContentFromCommit,
   useAnalyzeComplexity,
   useScanSecurity,
   useGetReviewGuide,
@@ -83,6 +85,7 @@ export const useApiClient = () => {
   const getBranchesHook = useGetBranches();
   const loadRepoHook = useLoadRepo();
   const getFileDiffHook = useGetFileDiff();
+  const getCompleteFileDiffHook = useGetCompleteFileDiff();
   const addCommentHook = useAddComment();
   const updateCommentHook = useUpdateComment();
   const deleteCommentHook = useDeleteComment();
@@ -97,6 +100,7 @@ export const useApiClient = () => {
   const getChecklistHook = useGetChecklist();
   const getBlameHook = useGetBlame();
   const readFileContentHook = useReadFileContent();
+  const readFileContentFromCommitHook = useReadFileContentFromCommit();
   const analyzeComplexityHook = useAnalyzeComplexity();
   const scanSecurityHook = useScanSecurity();
   const getReviewGuideHook = useGetReviewGuide();
@@ -175,6 +179,20 @@ export const useApiClient = () => {
     newCommit?: string
   ): Promise<DiffLine[]> => {
     return getFileDiffHook({
+      params: {
+        file_path: filePath,
+        old_commit: oldCommit,
+        new_commit: newCommit
+      }
+    });
+  };
+
+  const getCompleteFileDiff = async (
+    filePath: string,
+    oldCommit: string,
+    newCommit: string
+  ): Promise<DiffLine[]> => {
+    return getCompleteFileDiffHook({
       params: {
         file_path: filePath,
         old_commit: oldCommit,
@@ -452,6 +470,10 @@ export const useApiClient = () => {
     return readFileContentHook({ params: { file_path: filePath } });
   };
 
+  const readFileContentFromCommit = async (filePath: string, commitHash: string): Promise<string> => {
+    return readFileContentFromCommitHook({ file_path: filePath, commit_hash: commitHash });
+  };
+
   const analyzeComplexity = async (filePath: string): Promise<any> => {
     return analyzeComplexityHook({ file_path: filePath });
   };
@@ -500,6 +522,7 @@ export const useApiClient = () => {
     openRepoDialog,
     // Review
     getFileDiff,
+    getCompleteFileDiff,
     addComment,
     updateComment,
     deleteComment,
@@ -524,6 +547,7 @@ export const useApiClient = () => {
     getReviewGuide,
     getFileTree,
     readFileContent,
+    readFileContentFromCommit,
     analyzeComplexity,
     scanSecurity,
     // External
@@ -541,6 +565,7 @@ export const useApiClient = () => {
     getBranchesHook,
     loadRepoHook,
     getFileDiffHook,
+    getCompleteFileDiffHook,
     addCommentHook,
     updateCommentHook,
     deleteCommentHook,
@@ -554,6 +579,7 @@ export const useApiClient = () => {
     getChecklistHook,
     getBlameHook,
     readFileContentHook,
+    readFileContentFromCommitHook,
     analyzeComplexityHook,
     scanSecurityHook,
     getReviewGuideHook,

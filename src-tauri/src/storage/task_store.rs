@@ -1,7 +1,7 @@
 use crate::models::task::LocalTask;
 use anyhow::Result;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use uuid::Uuid;
 
 pub struct TaskStore {

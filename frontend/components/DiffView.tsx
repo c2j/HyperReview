@@ -46,7 +46,7 @@ const DiffView: React.FC<DiffViewProps> = ({
   activeFilePath: _activeFilePath,
 }) => {
   const { t } = useTranslation();
-  const { getFileDiff, getReviewTemplates, readFileContent } = useApiClient();
+  const { getFileDiff, getCompleteFileDiff, getReviewTemplates, readFileContent } = useApiClient();
   const { isRepoLoaded } = useRepositoryStatus();
 
   // Performance optimization instances
@@ -225,8 +225,19 @@ const DiffView: React.FC<DiffViewProps> = ({
 
         console.log('Requesting diff with oldCommit:', oldCommit, 'newCommit:', newCommit);
 
-        const [diffData, templateData] = await Promise.all([
-          getFileDiff(filePath || 'current-file', oldCommit, newCommit),
+        // Use complete diff for branch comparisons to show full file content
+        const isBranchComparison = diffContext && diffContext.base && diffContext.head && oldCommit && newCommit && oldCommit !== newCommit;
+        let diffData: DiffLine[];
+        
+        if (isBranchComparison) {
+          console.log('Using complete diff for branch comparison');
+          diffData = await getCompleteFileDiff(filePath || 'current-file', oldCommit!, newCommit!);
+        } else {
+          console.log('Using regular diff');
+          diffData = await getFileDiff(filePath || 'current-file', oldCommit, newCommit);
+        }
+
+        const [templateData] = await Promise.all([
           getReviewTemplates(),
         ]);
 
@@ -235,11 +246,14 @@ const DiffView: React.FC<DiffViewProps> = ({
 
         if (diffData.length === 0) {
           console.log('No diff lines returned for file:', filePath);
-          console.log('This means the file has no changes between HEAD and working directory');
+          console.log('This could mean:');
+          console.log('1. File has no changes between the specified commits/branches');
+          console.log('2. File doesn\'t exist in one of the commits');
+          console.log('3. File is binary or cannot be diffed');
 
-          // 如果是查看特定文件，尝试显示文件内容
-          if (filePath && filePath !== 'current-file') {
-            console.log('Attempting to load file content for:', filePath);
+          // For branch comparisons or specific files, try to show file content
+          if (isBranchComparison || (filePath && filePath !== 'current-file')) {
+            console.log(isBranchComparison ? 'Branch comparison - showing file content' : 'Attempting to load file content for:', filePath);
             setShowFileContent(true);
 
             try {

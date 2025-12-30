@@ -1,6 +1,6 @@
 import { create } from 'zustand';
-import type { LocalTask, TaskSummary } from '@types/task';
-import { useLocalTasks } from '@hooks/useLocalTasks';
+import type { LocalTask, TaskSummary } from '../types/task';
+import { useLocalTasks } from '../hooks/useLocalTasks';
 
 interface TaskStore {
   tasks: TaskSummary[];
@@ -12,7 +12,7 @@ interface TaskStore {
   setCurrentTask: (task: LocalTask | null) => void;
 }
 
-export const useTaskStore = create<TaskStore>((set, get) => ({
+export const useTaskStore = create<TaskStore>((set) => ({
   tasks: [],
   currentTask: null,
   isLoading: false,

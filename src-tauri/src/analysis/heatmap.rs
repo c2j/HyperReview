@@ -23,7 +23,11 @@ impl HeatmapGenerator {
     }
 
     /// Record file statistics for heatmap generation
-    pub fn record_file(&mut self, file_path: &str, loc: u32, complexity: f32) {
+    pub fn record_file(&mut self, 
+        file_path: &str, 
+        loc: u32, 
+        complexity: f32
+    ) {
         let stats = self.file_stats.entry(file_path.to_string()).or_insert(FileStats {
             lines_of_code: loc,
             change_count: 0,
@@ -35,7 +39,10 @@ impl HeatmapGenerator {
     }
 
     /// Generate heatmap from git log data
-    pub fn generate_from_git(&self, repo_path: &str) -> Result<Vec<HeatmapItem>, Box<dyn std::error::Error>> {
+    pub fn generate_from_git(
+        &self, 
+        repo_path: &str
+    ) -> Result<Vec<HeatmapItem>, Box<dyn std::error::Error>> {
         log::info!("Generating heatmap for repository: {}", repo_path);
 
         let repo = match git2::Repository::open(repo_path) {
@@ -147,28 +154,76 @@ impl HeatmapGenerator {
         Ok(items)
     }
 
-    /// Generate heatmap for changed files in current diff
-    pub fn generate_for_diff(&self, changed_files: &[String], repo_path: Option<&str>) -> Vec<HeatmapItem> {
-        changed_files
-            .iter()
+    /// Generate heatmap for changed files in current diff with improved metrics
+    pub fn generate_for_diff(
+        &self, 
+        changed_files: &[String], 
+        repo_path: Option<&str>
+    ) -> Vec<HeatmapItem> {
+        if changed_files.is_empty() {
+            return Vec::new();
+        }
+
+        log::info!("Generating heatmap for {} changed files", changed_files.len());
+
+        // Sort by file path length as a simple complexity indicator
+        let mut sorted_files: Vec<&String> = changed_files.iter().collect();
+        sorted_files.sort_by(|a, b| {
+            // Primary sort: by file extension (source files first)
+            let a_ext = std::path::Path::new(a).extension().and_then(|e| e.to_str()).unwrap_or("");
+            let b_ext = std::path::Path::new(b).extension().and_then(|e| e.to_str()).unwrap_or("");
+            
+            let is_source_a = matches!(a_ext, "rs" | "ts" | "js" | "java" | "py" | "go");
+            let is_source_b = matches!(b_ext, "rs" | "ts" | "js" | "java" | "py" | "go");
+            
+            if is_source_a != is_source_b {
+                is_source_b.cmp(&is_source_a) // Source files first
+            } else {
+                // Secondary sort: by path depth (deeper paths = more complex)
+                let depth_a = a.matches('/').count();
+                let depth_b = b.matches('/').count();
+                depth_b.cmp(&depth_a) // Deeper paths first
+            }
+        });
+
+        sorted_files
+            .into_iter()
             .enumerate()
             .map(|(idx, file_path)| {
-                // Simple impact calculation based on position and extension
-                let is_source_file = file_path.ends_with(".rs")
-                    || file_path.ends_with(".ts")
-                    || file_path.ends_with(".js")
-                    || file_path.ends_with(".java");
-
-                let complexity_score = if is_source_file { 0.6 } else { 0.3 };
-                let churn_score = 0.5;
+                // More accurate impact calculation based on file characteristics
+                let file_ext = std::path::Path::new(file_path).extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("");
+                
+                let is_source_file = matches!(file_ext, "rs" | "ts" | "js" | "java" | "py" | "go" | "cpp" | "c");
+                let is_config_file = matches!(file_ext, "json" | "yaml" | "yml" | "toml" | "xml");
+                let is_doc_file = matches!(file_ext, "md" | "txt" | "rst");
+                
+                // Calculate complexity score based on file type and depth
+                let complexity_score = if is_source_file {
+                    0.8 // Source files are high complexity
+                } else if is_config_file {
+                    0.6 // Config files are medium complexity
+                } else if is_doc_file {
+                    0.3 // Documentation is low complexity
+                } else {
+                    0.4 // Other files are low-medium complexity
+                };
+                
+                // Calculate churn score based on file path characteristics
+                let path_depth = file_path.matches('/').count() as f32;
+                let path_length_score = (path_depth / 10.0).min(0.5); // Max 50% from path depth
+                let churn_score = 0.3 + path_length_score; // Base 30% + up to 50% from depth
+                
                 let impact_score_float = (complexity_score + churn_score) / 2.0;
 
                 // Convert to 0-100 scale
                 let score = (impact_score_float * 100.0) as u32;
 
-                let category = if idx < 3 {
+                // Better category classification based on actual impact
+                let category = if impact_score_float >= 0.7 {
                     HeatmapCategory::High
-                } else if idx < 10 {
+                } else if impact_score_float >= 0.4 {
                     HeatmapCategory::Medium
                 } else {
                     HeatmapCategory::Low

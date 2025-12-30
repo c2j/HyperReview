@@ -266,6 +266,19 @@ pub struct FileStats {
     pub removed: u32,
 }
 
+/// Detailed diff statistics for accurate metrics
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DiffStats {
+    pub file_path: String,
+    pub change_type: String, // "added", "deleted", "modified", "renamed", etc.
+    pub added_lines: u32,
+    pub removed_lines: u32,
+    pub total_lines_old: u32,
+    pub total_lines_new: u32,
+    pub complexity_score: f32,
+    pub impact_score: f32,
+}
+
 /// Checklist Categories
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum ChecklistCategory {

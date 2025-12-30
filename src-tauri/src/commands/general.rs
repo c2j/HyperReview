@@ -77,17 +77,22 @@ pub async fn get_file_diff(
     state: State<'_, AppState>,
 ) -> Result<Vec<DiffLine>, String> {
     log::info!("Getting file diff for: {}", params.file_path);
+    log::info!("Diff params - old_commit: {:?}, new_commit: {:?}", params.old_commit, params.new_commit);
 
     // Check if repository is loaded
     let git_service = state.git_service.lock().unwrap();
     if !git_service.is_repo_loaded() {
+        log::error!("Repository not loaded");
         return Err("No repository loaded".to_string());
     }
 
     // Get repository from GitService
     let repository = match git_service.get_repository() {
         Some(repo) => repo,
-        None => return Err("Repository not available".to_string()),
+        None => {
+            log::error!("Repository not available");
+            return Err("Repository not available".to_string());
+        }
     };
 
     // Create diff engine
@@ -314,9 +319,20 @@ pub async fn create_template(
 }
 
 /// Gets heatmap data
+/// Optionally accepts base and head branches for comparison context
 #[tauri::command]
-pub async fn get_heatmap(state: State<'_, AppState>) -> Result<Vec<HeatmapItem>, String> {
-    log::info!("Getting heatmap data");
+pub async fn get_heatmap(
+    base_branch: Option<String>,
+    head_branch: Option<String>,
+    state: State<'_, crate::AppState>
+) -> Result<Vec<HeatmapItem>, String> {
+    log::info!("Getting heatmap data with base: {:?}, head: {:?}", base_branch, head_branch);
+
+    // If base and head branches are the same, return empty heatmap
+    if base_branch.is_some() && head_branch.is_some() && base_branch == head_branch {
+        log::info!("Base and head branches are identical, returning empty heatmap");
+        return Ok(Vec::new());
+    }
 
     let git_service = state.git_service.lock().unwrap();
     let repo_path = git_service.get_current_path()
@@ -699,12 +715,53 @@ pub async fn get_review_guide(state: State<'_, AppState>) -> Result<Vec<ReviewGu
             let default_guides = get_default_review_guides();
 
             // Store defaults in database for next time
-            let database = state.database.lock().unwrap();
+    let database = state.database.lock().unwrap();
             for guide in &default_guides {
                 if let Err(e) = database.store_review_guide(guide) {
                     log::error!("Failed to store default guide {}: {}", guide.id, e);
-                }
-            }
+    }
+}
+
+/// Gets complete file content from a specific commit for branch comparisons
+#[tauri::command]
+pub async fn read_file_content_from_commit(
+    file_path: String,
+    commit_hash: String,
+    state: State<'_, AppState>,
+) -> Result<String, String> {
+    log::info!("Reading file content from commit: {} for file: {}", commit_hash, file_path);
+
+    // Get repository from GitService
+    let git_service = state.git_service.lock().unwrap();
+    let repo = git_service.get_repository()
+        .ok_or_else(|| "No repository loaded".to_string())?;
+
+    // Find the commit
+    let commit = repo.find_commit(git2::Oid::from_str(&commit_hash)
+        .map_err(|e| format!("Invalid commit hash: {}", e))?)
+        .map_err(|e| format!("Commit not found: {}", e))?;
+
+    // Get the tree from the commit
+    let tree = commit.tree().map_err(|e| format!("Failed to get tree: {}", e))?;
+
+    // Find the file in the tree
+    let entry = tree.get_path(std::path::Path::new(&file_path))
+        .map_err(|e| format!("File not found in commit: {}", e))?;
+
+    // Get the blob object
+    let object = entry.to_object(&repo)
+        .map_err(|e| format!("Failed to get file object: {}", e))?;
+
+    let blob = object.as_blob()
+        .ok_or_else(|| "Object is not a blob".to_string())?;
+
+    // Convert content to string
+    let content = std::str::from_utf8(blob.content())
+        .map_err(|e| format!("File content is not valid UTF-8: {}", e))?;
+
+    log::info!("Successfully read file from commit, content length: {} bytes", content.len());
+    Ok(content.to_string())
+}
 
             return Ok(default_guides);
         }
@@ -1058,4 +1115,44 @@ pub async fn has_gerrit_credentials(
 
     let credential_store = state.credential_store.lock().unwrap();
     Ok(credential_store.has_credential("gerrit", &username))
+}
+
+/// Gets complete file diff showing full file content between commits
+#[tauri::command]
+pub async fn get_complete_file_diff(
+    params: DiffParams,
+    state: State<'_, AppState>,
+) -> Result<Vec<DiffLine>, String> {
+    log::info!("Getting complete file diff for: {}", params.file_path);
+    log::info!("Complete diff params - old_commit: {:?}, new_commit: {:?}", params.old_commit, params.new_commit);
+
+    // Check if repository is loaded
+    let git_service = state.git_service.lock().unwrap();
+    if !git_service.is_repo_loaded() {
+        log::error!("Repository not loaded");
+        return Err("No repository loaded".to_string());
+    }
+
+    // Get repository from GitService
+    let repository = match git_service.get_repository() {
+        Some(repo) => repo,
+        None => {
+            log::error!("Repository not available");
+            return Err("Repository not available".to_string());
+        }
+    };
+
+    // Create complete diff engine
+    let complete_diff_engine = git::complete_diff::CompleteDiffEngine::new(repository);
+
+    // Compute complete diff
+    let diff_lines = complete_diff_engine.compute_complete_diff(
+        &params.file_path,
+        params.old_commit.as_deref().unwrap_or("HEAD~1"),
+        params.new_commit.as_deref().unwrap_or("HEAD"),
+    )
+    .map_err(|e| e.to_string())?;
+
+    log::info!("Complete diff computed successfully: {} lines", diff_lines.len());
+    Ok(diff_lines)
 }

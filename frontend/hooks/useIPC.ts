@@ -63,6 +63,12 @@ export const useGetFileDiff = () => {
   );
 };
 
+export const useGetCompleteFileDiff = () => {
+  return useIPC<{ params: { file_path: string; old_commit: string; new_commit: string } }, any[]>(
+    'get_complete_file_diff',
+  );
+};
+
 export const useAddComment = () => {
   return useIPC<{ params: { file_path: string; line_number: number; content: string } }, any>(
     'add_comment',
@@ -104,7 +110,7 @@ export const useCreateTemplate = () => {
 
 // Analysis hooks
 export const useGetHeatmap = () => {
-  return useIPC<[], any[]>('get_heatmap');
+  return useIPC<{ baseBranch?: string; headBranch?: string }, any[]>('get_heatmap');
 };
 
 export const useGetFileTree = () => {
@@ -121,6 +127,10 @@ export const useGetBlame = () => {
 
 export const useReadFileContent = () => {
   return useIPC<{ params: { file_path: string } }, string>('read_file_content');
+};
+
+export const useReadFileContentFromCommit = () => {
+  return useIPC<{ file_path: string; commit_hash: string }, string>('read_file_content_from_commit');
 };
 
 export const useAnalyzeComplexity = () => {
