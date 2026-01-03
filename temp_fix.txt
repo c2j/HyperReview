@@ -1,0 +1,3 @@
+        Err(last_error.unwrap_or_else(|| {
+            GerritClientError::ConnectionError("All retry attempts failed".to_string())
+        }))

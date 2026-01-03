@@ -1,6 +1,6 @@
 import React from 'react';
 import { FileText, CheckCircle, Circle, AlertTriangle, HelpCircle } from 'lucide-react';
-import type { TaskItem } from '@types/task';
+import type { TaskItem } from '../types/task';
 
 interface TaskItemComponentProps {
   item: TaskItem;
@@ -73,7 +73,7 @@ const TaskItemComponent: React.FC<TaskItemComponentProps> = ({ item, isActive, o
 
           {item.tags && item.tags.length > 0 && (
             <div className="flex flex-wrap gap-1 mt-2">
-              {item.tags.map((tag, idx) => (
+              {item.tags.map((tag: string, idx: number) => (
                 <span
                   key={idx}
                   className="text-xs px-2 py-0.5 rounded bg-editor-line text-editor-fg/70"

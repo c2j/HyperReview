@@ -3,6 +3,7 @@ import { GitBranch, ArrowRight, ArrowLeftRight, Check, Play, Loader2, ArrowLeft,
 import { useTranslation } from '../i18n';
 import { useApiClient } from '../api/client';
 import { useCurrentRepository } from '../hooks/useRepository';
+import { useBranchSelectionPersistence } from '../hooks/useBranchSelectionPersistence';
 import type { Branch } from '../api/types';
 
 interface BranchCompareModalProps {
@@ -12,21 +13,46 @@ interface BranchCompareModalProps {
   onApply: (base: string, head: string) => void;
   isInitialSetup?: boolean;
   onBack?: () => void;
-  selectedRepoPath?: string; // 新增：选择的仓库路径
+  selectedRepoPath?: string;
 }
 
 const BranchCompareModal: React.FC<BranchCompareModalProps> = ({ currentBase, currentHead, onClose, onApply, isInitialSetup = false, onBack, selectedRepoPath }) => {
   const { t } = useTranslation();
   const { getBranches } = useApiClient();
   const { loadRepository } = useCurrentRepository();
-  const [base, setBase] = useState(currentBase);
-  const [head, setHead] = useState(currentHead);
+  const { baseBranch: storedBase, headBranch: storedHead } = useBranchSelectionPersistence();
+
+  // Use props if provided, otherwise use stored values
+  const [base, setBase] = useState(currentBase || storedBase || '');
+  const [head, setHead] = useState(currentHead || storedHead || '');
   const [branches, setBranches] = useState<Branch[]>([]);
   const [loading, setLoading] = useState(true);
   const [repoLoading, setRepoLoading] = useState(false);
 
   // Track loaded repo path to prevent duplicate loads
   const loadedPathRef = useRef<string | null>(null);
+  const hasInitializedRef = useRef(false);
+
+  // Auto-select branches on mount (only once)
+  useEffect(() => {
+    if (hasInitializedRef.current) {
+      return;
+    }
+
+    console.log('[BranchCompareModal] Initial props - currentBase:', currentBase, 'currentHead:', currentHead);
+    console.log('[BranchCompareModal] Stored branches - base:', storedBase, 'head:', storedHead);
+
+    // Use props if provided, otherwise use stored values
+    const initialBase = currentBase || storedBase || '';
+    const initialHead = currentHead || storedHead || '';
+
+    if (initialBase && initialHead) {
+      console.log('[BranchCompareModal] Initializing with branches:', initialBase, initialHead);
+      setBase(initialBase);
+      setHead(initialHead);
+      hasInitializedRef.current = true;
+    }
+  }, [currentBase, currentHead, storedBase, storedHead]);
 
   useEffect(() => {
     const loadRepoAndBranches = async () => {
@@ -45,7 +71,7 @@ const BranchCompareModal: React.FC<BranchCompareModalProps> = ({ currentBase, cu
       try {
         setRepoLoading(true);
         console.log('[BranchCompareModal] Loading repository:', selectedRepoPath);
-        // Use loadRepository which updates the store state
+        // Use loadRepository which updates store state
         await loadRepository(selectedRepoPath);
         console.log('[BranchCompareModal] ✅ Repository loaded successfully');
         loadedPathRef.current = selectedRepoPath;
@@ -207,7 +233,10 @@ const BranchCompareModal: React.FC<BranchCompareModalProps> = ({ currentBase, cu
                 {t('modal.open_repo.cancel')}
             </button>
             <button
-            onClick={() => onApply(base, head)}
+            onClick={() => {
+              console.log('[BranchCompareModal] Applying comparison - base:', base, 'head:', head);
+              onApply(base, head);
+            }}
             disabled={loading || repoLoading}
             className={`px-4 py-1.5 rounded text-xs text-white hover:bg-blue-600 transition-colors font-medium shadow-sm flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed
                 ${isInitialSetup ? 'bg-editor-success hover:bg-green-600' : 'bg-editor-accent'}`}

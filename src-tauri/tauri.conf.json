@@ -12,7 +12,10 @@
       },
       "dialog": {
         "open": true,
-        "save": true
+        "save": true,
+        "message": true,
+        "ask": true,
+        "confirm": true
       },
       "fs": {
         "readFile": true,

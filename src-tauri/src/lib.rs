@@ -7,15 +7,10 @@ use std::sync::{Arc, Mutex};
 
 // Import modules
 pub mod commands;
-pub mod models;
-pub mod errors;
 
-pub mod git {
-    pub mod service;
-    pub mod diff;
-    pub mod complete_diff;
-    pub mod repo_manager;
-}
+pub mod models;
+pub mod git;
+pub mod errors;
 
 pub mod analysis {
     pub mod engine;
@@ -31,11 +26,21 @@ pub mod storage {
     pub mod cache;
     pub mod credentials;
     pub mod task_store;
+    pub mod settings;
+    pub mod metadata;
+    pub mod migrations;
+    pub mod offline_cache;
+    pub mod operation_queue;
 }
 
 pub mod search {
     pub mod service;
     pub mod index;
+}
+
+pub mod services {
+    pub mod encryption;
+    pub mod credential_store;
 }
 
 pub mod remote {
@@ -77,12 +82,11 @@ impl AppState {
         let database = storage::sqlite::Database::new(db_path)
             .map_err(errors::HyperReviewError::Database)?;
 
-        // Initialize schema
+         // Initialize schema
         database.init_schema()
             .map_err(errors::HyperReviewError::Database)?;
-
         log::info!("Database initialized successfully");
-
+        
         Ok(Self {
             git_service: Arc::new(Mutex::new(git::service::GitService::new())),
             cache_manager: Arc::new(storage::cache::CacheManager::new()),
@@ -173,18 +177,16 @@ pub fn run() {
             commands::general::create_tag,
 
             // Credential management commands
-            commands::general::store_gerrit_credentials,
-            commands::general::get_gerrit_credentials,
-            commands::general::delete_gerrit_credentials,
-            commands::general::has_gerrit_credentials,
-
-            // External integration commands
-            commands::general::submit_review,
-            commands::general::sync_repo,
-
             // Search and configuration commands
             commands::general::search,
             commands::general::get_commands,
+
+            // Persistence commands
+            commands::persistence_commands::get_user_settings,
+            commands::persistence_commands::save_user_setting,
+            commands::persistence_commands::get_repo_selection,
+            commands::persistence_commands::save_repo_selection,
+            commands::persistence_commands::clear_repo_selection,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

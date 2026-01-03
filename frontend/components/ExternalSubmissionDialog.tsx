@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Modal from '@components/Modal';
 import { ExternalLink, CheckCircle, AlertCircle, Settings } from 'lucide-react';
+import { useLocalTasks } from '@hooks/useLocalTasks';
 
 type SubmissionSystem = 'gerrit' | 'codearts' | 'custom';
 
@@ -21,6 +22,7 @@ const ExternalSubmissionDialog: React.FC<ExternalSubmissionDialogProps> = ({
 }) => {
   const [system, setSystem] = useState<SubmissionSystem>('gerrit');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const { submitToGerrit, submitToCodeArts, submitToCustomApi } = useLocalTasks();
 
   const [gerritConfig, setGerritConfig] = useState({
     gerritUrl: 'https://gerrit-review.example.com',
@@ -48,16 +50,10 @@ const ExternalSubmissionDialog: React.FC<ExternalSubmissionDialogProps> = ({
     setIsSubmitting(true);
 
     try {
-      const {
-        submitToGerrit: fnGerrit,
-        submitToCodeArts: fnCodeArts,
-        submitToCustomApi: fnCustom,
-      } = await import('@hooks/useLocalTasks');
-
       let result;
       switch (system) {
         case 'gerrit':
-          result = await fnGerrit(
+          result = await submitToGerrit(
             taskId,
             gerritConfig.gerritUrl,
             gerritConfig.username,
@@ -67,7 +63,7 @@ const ExternalSubmissionDialog: React.FC<ExternalSubmissionDialogProps> = ({
           );
           break;
         case 'codearts':
-          result = await fnCodeArts(
+          result = await submitToCodeArts(
             taskId,
             codeartsConfig.projectId,
             Number(codeartsConfig.mrId),
@@ -75,7 +71,7 @@ const ExternalSubmissionDialog: React.FC<ExternalSubmissionDialogProps> = ({
           );
           break;
         case 'custom':
-          result = await fnCustom(
+          result = await submitToCustomApi(
             taskId,
             customConfig.endpoint,
             customConfig.method,

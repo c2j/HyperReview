@@ -17,14 +17,18 @@ import TagManagerModal from './components/TagManagerModal';
 import SyncStatusModal from './components/SyncStatusModal';
 import BranchCompareModal from './components/BranchCompareModal';
 import TourGuide from './components/TourGuide';
+import GerritImportModal from './components/GerritImportModal';
+import { SimpleChange, simpleGerritService } from './services/gerrit-simple-service';
 import { useTranslation } from './i18n';
 import { useApiClient } from './api/client';
 
 const App: React.FC = () => {
   const { t } = useTranslation();
   const apiClient = useApiClient();
+
   const [activeTaskId, setActiveTaskId] = useState('1');
   const [notification, setNotification] = useState<string | null>(null);
+  const [gerritRefreshKey, setGerritRefreshKey] = useState(0);
 
   // Repository & Diff Context State
   const [isRepoLoaded, setIsRepoLoaded] = useState(false);
@@ -63,6 +67,7 @@ const App: React.FC = () => {
   const [openRepoModalOpen, setOpenRepoModalOpen] = useState(false);
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
   const [newTaskInitialTab, setNewTaskInitialTab] = useState<'import' | 'create'>('import');
+  const [gerritImportModalOpen, setGerritImportModalOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -163,6 +168,12 @@ const App: React.FC = () => {
     } else {
       showNotification(`Comparing ${base} ← ${head}`);
     }
+    // 保存上次打开的仓库和分支到 localStorage
+    if (selectedRepoPath) {
+      localStorage.setItem('lastRepoPath', selectedRepoPath);
+      localStorage.setItem('lastBranchBase', base);
+      localStorage.setItem('lastBranchHead', head);
+    }
     // 重置当前文件为默认值，避免显示不存在的文件
     setActiveFilePath('src/main/OrderService.java');
     // 刷新所有相关数据
@@ -178,6 +189,29 @@ const App: React.FC = () => {
   const handleImportTask = (id: string) => {
     showNotification(`Task imported: ${id}`);
     setNewTaskModalOpen(false);
+  };
+
+  const handleGerritChangeImport = async (changeIdOrChange: string | SimpleChange) => {
+    try {
+      let importedChange: SimpleChange | null = null;
+
+      if (typeof changeIdOrChange === 'string') {
+        importedChange = await simpleGerritService.importChange(changeIdOrChange);
+      } else {
+        importedChange = changeIdOrChange;
+        simpleGerritService.importChange(`#${changeIdOrChange.change_number}`);
+      }
+
+      if (importedChange) {
+        showNotification(`Gerrit change imported: #${importedChange.change_number}`);
+        setGerritImportModalOpen(false);
+        setActiveTaskId(importedChange.id);
+        setGerritRefreshKey(prev => prev + 1);
+      }
+    } catch (error) {
+      console.error('Failed to import Gerrit change:', error);
+      showNotification('Failed to import Gerrit change: ' + (error as Error).message);
+    }
   };
 
   const handleCreateTask = async (task: { title: string; type: string; files: string[] }) => {
@@ -354,6 +388,48 @@ const App: React.FC = () => {
     showNotification(msg);
   };
 
+  // 启动时恢复上次打开的仓库和分支
+  useEffect(() => {
+    const lastRepoPath = localStorage.getItem('lastRepoPath');
+    const lastBranchBase = localStorage.getItem('lastBranchBase');
+    const lastBranchHead = localStorage.getItem('lastBranchHead');
+
+    console.log('[App] Checking localStorage values:', {
+      lastRepoPath,
+      lastBranchBase,
+      lastBranchHead,
+      hasAllValues: !!(lastRepoPath && lastBranchBase && lastBranchHead)
+    });
+
+    // 只有当所有值都存在时才恢复
+    if (lastRepoPath && lastBranchBase && lastBranchHead) {
+      console.log('[App] Restoring last session:', { lastRepoPath, lastBranchBase, lastBranchHead });
+
+      // 先设置分支，确保 BranchCompareModal 打开时已经有正确的值
+      setDiffContext({ base: lastBranchBase, head: lastBranchHead });
+      console.log('[App] diffContext set to:', { base: lastBranchBase, head: lastBranchHead });
+      setSelectedRepoPath(lastRepoPath);
+      console.log('[App] selectedRepoPath set to:', lastRepoPath);
+
+      // 延迟打开 modal，确保状态已更新
+      setTimeout(() => {
+        console.log('[App] Opening BranchCompareModal for restore, isInitialSetup:', isInitialSetup);
+        setBranchCompareModalOpen(true);
+      }, 200);
+
+      // 完成初始化
+      setTimeout(() => {
+        console.log('[App] Completing restoration');
+        setIsRepoLoaded(true);
+        showNotification(`Restored: ${lastRepoPath} (${lastBranchBase} ← ${lastBranchHead})`);
+        setActiveFilePath('src/main/OrderService.java');
+        setRepoRefreshKey((prev) => prev + 1);
+      }, 800);
+    } else {
+      console.log('[App] No valid last session to restore');
+    }
+  }, []);
+
   return (
     <div className="flex flex-col h-screen w-screen bg-editor-bg text-editor-fg font-mono overflow-hidden relative">
       <TitleBar onAction={handleAction} />
@@ -381,6 +457,7 @@ const App: React.FC = () => {
               repoRefreshKey={repoRefreshKey}
               onSelectFile={setSelectedFile}
               selectedFile={selectedFile}
+              gerritRefreshKey={gerritRefreshKey}
             />
           </div>
         )}
@@ -456,7 +533,15 @@ const App: React.FC = () => {
           onClose={() => setNewTaskModalOpen(false)}
           onImport={handleImportTask}
           onCreate={handleCreateTask}
+          onGerritImport={handleGerritChangeImport}
           initialTab={newTaskInitialTab}
+        />
+      </Modal>
+
+      <Modal isOpen={gerritImportModalOpen} onClose={() => setGerritImportModalOpen(false)} title="Import from Gerrit">
+        <GerritImportModal
+          onClose={() => setGerritImportModalOpen(false)}
+          onImport={handleGerritChangeImport}
         />
       </Modal>
 
@@ -523,7 +608,17 @@ const App: React.FC = () => {
           currentHead={diffContext.head}
           isInitialSetup={isInitialSetup}
           onClose={() => {
+            // Close modal
             if (isRepoLoaded) setBranchCompareModalOpen(false);
+
+            // Clear saved values if user cancelled without completing
+            const lastRepoPath = localStorage.getItem('lastRepoPath');
+            if (lastRepoPath && !isRepoLoaded) {
+              console.log('[App] User cancelled, clearing saved session');
+              localStorage.removeItem('lastRepoPath');
+              localStorage.removeItem('lastBranchBase');
+              localStorage.removeItem('lastBranchHead');
+            }
           }}
           onApply={handleApplyBranchCompare}
           onBack={handleBackToRepoSelection}

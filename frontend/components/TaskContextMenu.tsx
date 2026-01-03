@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
-import { MoreVertical, Edit, Trash2, Archive, FileDown, Check, ExternalLink } from 'lucide-react';
-import type { TaskSummary } from '@types/task';
+import { Edit, Trash2, Archive, FileDown, Check, ExternalLink } from 'lucide-react';
+import type { TaskSummary } from '../types/task';
 
 interface TaskContextMenuProps {
   task: TaskSummary;

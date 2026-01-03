@@ -78,9 +78,7 @@ const RightPanel: React.FC<RightPanelProps> = ({
     switch (activeTab) {
       case Tab.HEATMAP:
         // Use diff context branches if available for diff-based heatmap
-        const baseBranch = diffContext?.base;
-        const headBranch = diffContext?.head;
-        promise = getHeatmap(baseBranch, headBranch).then(setHeatmapData);
+        promise = getHeatmap().then(setHeatmapData);
         break;
       case Tab.BLAME:
         promise = getBlame('current-file').then(setBlameData);

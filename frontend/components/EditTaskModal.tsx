@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import Modal from '@components/Modal';
-import type { LocalTask } from '@types/task';
+import type { LocalTask } from '../types/task';
+import { useLocalTasks } from '@hooks/useLocalTasks';
 
 interface EditTaskModalProps {
   isOpen: boolean;
@@ -14,13 +15,14 @@ const EditTaskModal: React.FC<EditTaskModalProps> = ({ isOpen, onClose, task, on
   const [baseRef, setBaseRef] = useState('');
   const [itemsText, setItemsText] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const { updateTask } = useLocalTasks();
 
   useEffect(() => {
     if (task) {
       setName(task.name);
       setBaseRef(task.base_ref);
       const itemsStr = task.items
-        .map((item) => {
+        .map((item: any) => {
           let line = item.file;
           if (item.preset_comment) {
             line += `\t${item.preset_comment}`;
@@ -41,10 +43,7 @@ const EditTaskModal: React.FC<EditTaskModalProps> = ({ isOpen, onClose, task, on
 
     setIsLoading(true);
     try {
-      const { updateTask } = await import('@hooks/useLocalTasks');
-      const { updateTask: updateTaskFn } = updateTask();
-
-      const updated = await updateTaskFn(task.id, name, baseRef);
+      const updated = await updateTask(task.id, name, baseRef);
       onSave(updated);
       onClose();
     } catch (error) {

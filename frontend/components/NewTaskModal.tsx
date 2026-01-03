@@ -2,17 +2,20 @@
 import React, { useState } from 'react';
 import { Upload, GitPullRequest, FileText, Database, Shield, Plus, FileSpreadsheet, X } from 'lucide-react';
 import { useTranslation } from '../i18n';
+import GerritImportModal from './GerritImportModal';
+import { SimpleChange } from '../services/gerrit-simple-service';
 
 interface NewTaskModalProps {
   onClose: () => void;
   onImport: (id: string) => void;
   onCreate: (task: { title: string; type: string; files: string[] }) => void;
-  initialTab?: 'import' | 'create';
+  onGerritImport?: (change: SimpleChange) => void;
+  initialTab?: 'import' | 'create' | 'gerrit';
 }
 
-const NewTaskModal: React.FC<NewTaskModalProps> = ({ onClose, onImport, onCreate, initialTab = 'import' }) => {
+const NewTaskModal: React.FC<NewTaskModalProps> = ({ onClose, onImport, onCreate, onGerritImport, initialTab = 'import' }) => {
   const { t } = useTranslation();
-  const [activeTab, setActiveTab] = useState<'import' | 'create'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'import' | 'create' | 'gerrit'>(initialTab);
 
   // Import State
   const [importValue, setImportValue] = useState('');
@@ -97,6 +100,11 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ onClose, onImport, onCreate
               onClick={() => setActiveTab('create')}
               className={`flex-1 py-2 text-xs font-bold uppercase transition-colors border-b-2 ${activeTab === 'create' ? 'border-editor-accent text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
               {t('modal.new_task.tab_create')}
+          </button>
+          <button
+              onClick={() => setActiveTab('gerrit')}
+              className={`flex-1 py-2 text-xs font-bold uppercase transition-colors border-b-2 ${activeTab === 'gerrit' ? 'border-editor-accent text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}>
+              Gerrit
           </button>
       </div>
 
@@ -265,6 +273,19 @@ const NewTaskModal: React.FC<NewTaskModalProps> = ({ onClose, onImport, onCreate
                     <Plus size={14} /> {t('modal.create_task.create')}
                 </button>
             </div>
+          </div>
+      )}
+
+      {activeTab === 'gerrit' && (
+         <div className="animate-fade-in">
+            <GerritImportModal
+               onClose={onClose}
+               onImport={(change) => {
+                  if (onGerritImport) {
+                     onGerritImport(change);
+                  }
+               }}
+            />
          </div>
       )}
     </div>

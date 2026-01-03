@@ -1,0 +1,501 @@
+// Gerrit Change Repository
+// Manages database operations for Gerrit changes
+
+use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use rusqlite::{Connection, params};
+use log::{info, warn, error, debug};
+
+use crate::errors::HyperReviewError;
+use crate::models::gerrit::*;
+
+/// Repository pattern for GerritChange operations
+pub struct GerritChangeRepository {
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl GerritChangeRepository {
+    pub fn new(conn: Arc<Mutex<Connection>>) -> Self {
+        Self { conn }
+    }
+    
+    /// Create a new Gerrit change
+    pub fn create_change(&self, change: &GerritChange) -> Result<String, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let owner_json = serde_json::to_string(&change.owner)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize owner: {}", e),
+                operation: "create_change".to_string(),
+            })?;
+            
+        let patch_sets_json = serde_json::to_string(&change.patch_sets)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize patch sets: {}", e),
+                operation: "create_change".to_string(),
+            })?;
+            
+        let files_json = serde_json::to_string(&change.files)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize files: {}", e),
+                operation: "create_change".to_string(),
+            })?;
+            
+        let metadata_json = serde_json::to_string(&change.metadata)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize metadata: {}", e),
+                operation: "create_change".to_string(),
+            })?;
+        
+        conn.execute(
+            "INSERT INTO gerrit_changes (
+                id, change_id, instance_id, project, branch, subject, status,
+                owner, created, updated, insertions, deletions, current_revision,
+                current_patch_set_num, total_files, reviewed_files, local_comments,
+                remote_comments, import_status, last_sync, conflict_status, metadata,
+                patch_sets, files
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+            params![
+                change.id, change.change_id, change.instance_id, change.project,
+                change.branch, change.subject, change.status.to_string(),
+                owner_json, change.created, change.updated, change.insertions,
+                change.deletions, change.current_revision, change.current_patch_set_num,
+                change.total_files, change.reviewed_files, change.local_comments,
+                change.remote_comments, change.import_status.to_string(), change.last_sync,
+                change.conflict_status.to_string(), metadata_json, patch_sets_json, files_json
+            ],
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to create change: {}", e),
+            operation: "create_change".to_string(),
+        })?;
+        
+        info!("Created Gerrit change: {} ({})", change.change_id, change.subject);
+        Ok(change.id.clone())
+    }
+    
+    /// Get a Gerrit change by ID
+    pub fn get_change(&self, id: &str) -> Result<Option<GerritChange>, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut stmt = conn.prepare(
+            "SELECT * FROM gerrit_changes WHERE id = ?1"
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to prepare statement: {}", e),
+            operation: "get_change".to_string(),
+        })?;
+        
+        let change = stmt.query_row([id], |row| {
+            let owner_json: String = row.get(7)?;
+            let owner: GerritUser = serde_json::from_str(&owner_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize owner: {}", e)
+                ))?;
+                
+            let patch_sets_json: String = row.get(19)?;
+            let patch_sets: Vec<PatchSet> = serde_json::from_str(&patch_sets_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize patch sets: {}", e)
+                ))?;
+                
+            let files_json: String = row.get(20)?;
+            let files: Vec<GerritFile> = serde_json::from_str(&files_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize files: {}", e)
+                ))?;
+                
+            let metadata_json: String = row.get(21)?;
+            let metadata: HashMap<String, String> = serde_json::from_str(&metadata_json)
+                .unwrap_or_default();
+            
+            Ok(GerritChange {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                instance_id: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                subject: row.get(5)?,
+                status: ChangeStatus::from_string(&row.get::<String>(6)?),
+                owner,
+                created: row.get(8)?,
+                updated: row.get(9)?,
+                insertions: row.get(10)?,
+                deletions: row.get(11)?,
+                current_revision: row.get(12)?,
+                current_patch_set_num: row.get(13)?,
+                patch_sets,
+                files,
+                total_files: row.get(14)?,
+                reviewed_files: row.get(15)?,
+                local_comments: row.get(16)?,
+                remote_comments: row.get(17)?,
+                import_status: ImportStatus::from_string(&row.get::<String>(18)?),
+                last_sync: row.get(19)?,
+                conflict_status: ConflictStatus::from_string(&row.get::<String>(20)?),
+                metadata,
+            })
+        }).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to query change: {}", e),
+            operation: "get_change".to_string(),
+        });
+        
+        match change {
+            Ok(c) => Ok(Some(c)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database {
+                message: format!("Failed to get change: {}", e),
+                operation: "get_change".to_string(),
+            })
+        }
+    }
+    
+    /// Get a Gerrit change by Gerrit change ID
+    pub fn get_change_by_gerrit_id(&self, instance_id: &str, change_id: &str) -> Result<Option<GerritChange>, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut stmt = conn.prepare(
+            "SELECT * FROM gerrit_changes WHERE instance_id = ?1 AND change_id = ?2"
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to prepare statement: {}", e),
+            operation: "get_change_by_gerrit_id".to_string(),
+        })?;
+        
+        let change = stmt.query_row([instance_id, change_id], |row| {
+            let owner_json: String = row.get(7)?;
+            let owner: GerritUser = serde_json::from_str(&owner_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize owner: {}", e)
+                ))?;
+                
+            let patch_sets_json: String = row.get(19)?;
+            let patch_sets: Vec<PatchSet> = serde_json::from_str(&patch_sets_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize patch sets: {}", e)
+                ))?;
+                
+            let files_json: String = row.get(20)?;
+            let files: Vec<GerritFile> = serde_json::from_str(&files_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize files: {}", e)
+                ))?;
+                
+            let metadata_json: String = row.get(21)?;
+            let metadata: HashMap<String, String> = serde_json::from_str(&metadata_json)
+                .unwrap_or_default();
+            
+            Ok(GerritChange {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                instance_id: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                subject: row.get(5)?,
+                status: ChangeStatus::from_string(&row.get::<String>(6)?),
+                owner,
+                created: row.get(8)?,
+                updated: row.get(9)?,
+                insertions: row.get(10)?,
+                deletions: row.get(11)?,
+                current_revision: row.get(12)?,
+                current_patch_set_num: row.get(13)?,
+                patch_sets,
+                files,
+                total_files: row.get(14)?,
+                reviewed_files: row.get(15)?,
+                local_comments: row.get(16)?,
+                remote_comments: row.get(17)?,
+                import_status: ImportStatus::from_string(&row.get::<String>(18)?),
+                last_sync: row.get(19)?,
+                conflict_status: ConflictStatus::from_string(&row.get::<String>(20)?),
+                metadata,
+            })
+        }).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to query change: {}", e),
+            operation: "get_change_by_gerrit_id".to_string(),
+        });
+        
+        match change {
+            Ok(c) => Ok(Some(c)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database {
+                message: format!("Failed to get change: {}", e),
+                operation: "get_change_by_gerrit_id".to_string(),
+            })
+        }
+    }
+    
+    /// Get all changes for a specific instance
+    pub fn get_changes_by_instance(&self, instance_id: &str) -> Result<Vec<GerritChange>, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut stmt = conn.prepare(
+            "SELECT * FROM gerrit_changes WHERE instance_id = ?1 ORDER BY updated DESC"
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to prepare statement: {}", e),
+            operation: "get_changes_by_instance".to_string(),
+        })?;
+        
+        let changes = stmt.query_map([instance_id], |row| {
+            let owner_json: String = row.get(7)?;
+            let owner: GerritUser = serde_json::from_str(&owner_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize owner: {}", e)
+                ))?;
+                
+            let patch_sets_json: String = row.get(19)?;
+            let patch_sets: Vec<PatchSet> = serde_json::from_str(&patch_sets_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize patch sets: {}", e)
+                ))?;
+                
+            let files_json: String = row.get(20)?;
+            let files: Vec<GerritFile> = serde_json::from_str(&files_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize files: {}", e)
+                ))?;
+                
+            let metadata_json: String = row.get(21)?;
+            let metadata: HashMap<String, String> = serde_json::from_str(&metadata_json)
+                .unwrap_or_default();
+            
+            Ok(GerritChange {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                instance_id: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                subject: row.get(5)?,
+                status: ChangeStatus::from_string(&row.get::<String>(6)?),
+                owner,
+                created: row.get(8)?,
+                updated: row.get(9)?,
+                insertions: row.get(10)?,
+                deletions: row.get(11)?,
+                current_revision: row.get(12)?,
+                current_patch_set_num: row.get(13)?,
+                patch_sets,
+                files,
+                total_files: row.get(14)?,
+                reviewed_files: row.get(15)?,
+                local_comments: row.get(16)?,
+                remote_comments: row.get(17)?,
+                import_status: ImportStatus::from_string(&row.get::<String>(18)?),
+                last_sync: row.get(19)?,
+                conflict_status: ConflictStatus::from_string(&row.get::<String>(20)?),
+                metadata,
+            })
+        }).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to query changes: {}", e),
+            operation: "get_changes_by_instance".to_string(),
+        })?;
+        
+        changes.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyperReviewError::Database {
+                message: format!("Failed to collect changes: {}", e),
+                operation: "get_changes_by_instance".to_string(),
+            })
+    }
+    
+    /// Update a Gerrit change
+    pub fn update_change(&self, change: &GerritChange) -> Result<(), HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let owner_json = serde_json::to_string(&change.owner)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize owner: {}", e),
+                operation: "update_change".to_string(),
+            })?;
+            
+        let patch_sets_json = serde_json::to_string(&change.patch_sets)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize patch sets: {}", e),
+                operation: "update_change".to_string(),
+            })?;
+            
+        let files_json = serde_json::to_string(&change.files)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize files: {}", e),
+                operation: "update_change".to_string(),
+            })?;
+            
+        let metadata_json = serde_json::to_string(&change.metadata)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize metadata: {}", e),
+                operation: "update_change".to_string(),
+            })?;
+        
+        conn.execute(
+            "UPDATE gerrit_changes SET
+                subject = ?2, status = ?3, owner = ?4, updated = ?5,
+                reviewed_files = ?6, local_comments = ?7, import_status = ?8,
+                last_sync = ?9, conflict_status = ?10, metadata = ?11,
+                patch_sets = ?12, files = ?13
+            WHERE id = ?1",
+            params![
+                change.id, change.subject, change.status.to_string(),
+                owner_json, change.updated, change.reviewed_files,
+                change.local_comments, change.import_status.to_string(),
+                change.last_sync, change.conflict_status.to_string(),
+                metadata_json, patch_sets_json, files_json
+            ],
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to update change: {}", e),
+            operation: "update_change".to_string(),
+        })?;
+        
+        info!("Updated Gerrit change: {} ({})", change.change_id, change.subject);
+        Ok(())
+    }
+    
+    /// Delete a Gerrit change
+    pub fn delete_change(&self, id: &str) -> Result<(), HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        conn.execute(
+            "DELETE FROM gerrit_changes WHERE id = ?1",
+            [id],
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to delete change: {}", e),
+            operation: "delete_change".to_string(),
+        })?;
+        
+        info!("Deleted Gerrit change: {}", id);
+        Ok(())
+    }
+    
+    /// Batch insert multiple changes
+    pub fn batch_insert_changes(&self, changes: &[GerritChange]) -> Result<usize, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let tx = conn.unchecked_transaction()
+            .map_err(|e| HyperReviewError::Database {
+                message: format!("Failed to start transaction: {}", e),
+                operation: "batch_insert_changes".to_string(),
+            })?;
+        
+        let mut count = 0;
+        for change in changes {
+            let owner_json = serde_json::to_string(&change.owner)
+                .map_err(|e| HyperReviewError::Serialization {
+                    message: format!("Failed to serialize owner: {}", e),
+                    operation: "batch_insert_changes".to_string(),
+                })?;
+                
+            let patch_sets_json = serde_json::to_string(&change.patch_sets)
+                .map_err(|e| HyperReviewError::Serialization {
+                    message: format!("Failed to serialize patch sets: {}", e),
+                    operation: "batch_insert_changes".to_string(),
+                })?;
+                
+            let files_json = serde_json::to_string(&change.files)
+                .map_err(|e| HyperReviewError::Serialization {
+                    message: format!("Failed to serialize files: {}", e),
+                    operation: "batch_insert_changes".to_string(),
+                })?;
+                
+            let metadata_json = serde_json::to_string(&change.metadata)
+                .map_err(|e| HyperReviewError::Serialization {
+                    message: format!("Failed to serialize metadata: {}", e),
+                    operation: "batch_insert_changes".to_string(),
+                })?;
+            
+            tx.execute(
+                "INSERT OR REPLACE INTO gerrit_changes (
+                    id, change_id, instance_id, project, branch, subject, status,
+                    owner, created, updated, insertions, deletions, current_revision,
+                    current_patch_set_num, total_files, reviewed_files, local_comments,
+                    remote_comments, import_status, last_sync, conflict_status, metadata,
+                    patch_sets, files
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22)",
+                params![
+                    change.id, change.change_id, change.instance_id, change.project,
+                    change.branch, change.subject, change.status.to_string(),
+                    owner_json, change.created, change.updated, change.insertions,
+                    change.deletions, change.current_revision, change.current_patch_set_num,
+                    change.total_files, change.reviewed_files, change.local_comments,
+                    change.remote_comments, change.import_status.to_string(), change.last_sync,
+                    change.conflict_status.to_string(), metadata_json, patch_sets_json, files_json
+                ],
+            ).map_err(|e| HyperReviewError::Database {
+                message: format!("Failed to insert change in batch: {}", e),
+                operation: "batch_insert_changes".to_string(),
+            })?;
+            
+            count += 1;
+        }
+        
+        tx.commit()
+            .map_err(|e| HyperReviewError::Database {
+                message: format!("Failed to commit batch insert: {}", e),
+                operation: "batch_insert_changes".to_string(),
+            })?;
+        
+        info!("Batch inserted {} Gerrit changes", count);
+        Ok(count)
+    }
+}
+
+/// String conversion helpers for enums
+impl ChangeStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s {
+            "New" => ChangeStatus::New,
+            "Draft" => ChangeStatus::Draft,
+            "Merged" => ChangeStatus::Merged,
+            "Abandoned" => ChangeStatus::Abandoned,
+            _ => ChangeStatus::New,
+        }
+    }
+    
+    pub fn to_string(&self) -> String {
+        match self {
+            ChangeStatus::New => "New".to_string(),
+            ChangeStatus::Draft => "Draft".to_string(),
+            ChangeStatus::Merged => "Merged".to_string(),
+            ChangeStatus::Abandoned => "Abandoned".to_string(),
+        }
+    }
+}
+
+impl ImportStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s {
+            "Pending" => ImportStatus::Pending,
+            "Importing" => ImportStatus::Importing,
+            "Imported" => ImportStatus::Imported,
+            "Failed" => ImportStatus::Failed,
+            "Outdated" => ImportStatus::Outdated,
+            _ => ImportStatus::Pending,
+        }
+    }
+    
+    pub fn to_string(&self) -> String {
+        match self {
+            ImportStatus::Pending => "Pending".to_string(),
+            ImportStatus::Importing => "Importing".to_string(),
+            ImportStatus::Imported => "Imported".to_string(),
+            ImportStatus::Failed => "Failed".to_string(),
+            ImportStatus::Outdated => "Outdated".to_string(),
+        }
+    }
+}
+
+impl ConflictStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s {
+            "None" => ConflictStatus::None,
+            "CommentsPending" => ConflictStatus::CommentsPending,
+            "PatchSetUpdated" => ConflictStatus::PatchSetUpdated,
+            "ManualResolutionRequired" => ConflictStatus::ManualResolutionRequired,
+            _ => ConflictStatus::None,
+        }
+    }
+    
+    pub fn to_string(&self) -> String {
+        match self {
+            ConflictStatus::None => "None".to_string(),
+            ConflictStatus::CommentsPending => "CommentsPending".to_string(),
+            ConflictStatus::PatchSetUpdated => "PatchSetUpdated".to_string(),
+            ConflictStatus::ManualResolutionRequired => "ManualResolutionRequired".to_string(),
+        }
+    }
+}

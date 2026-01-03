@@ -1,0 +1,13 @@
+pub mod sqlite;
+pub mod cache;
+pub mod credentials;
+pub mod task_store;
+pub mod metadata;
+pub mod change_repository;
+pub mod comment_repository;
+pub mod gerrit_instance_repository;
+pub mod migrations;
+pub mod offline_cache;
+pub mod operation_queue;
+pub mod settings;
+pub mod repo_persistence;

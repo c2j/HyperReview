@@ -75,12 +75,37 @@ pub enum HyperReviewError {
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// Encryption errors
+    #[error("Encryption error: {0}")]
+    Encryption(String),
+
+    /// Decryption errors
+    #[error("Decryption error: {0}")]
+    Decryption(String),
+
+    /// Hashing errors
+    #[error("Hashing error: {0}")]
+    Hashing(String),
+
     /// Other errors
     #[error("Error: {message}")]
     Other {
         message: String,
     },
 }
+
+impl From<&str> for HyperReviewError {
+    fn from(s: &str) -> Self {
+        Self::Other { message: s.to_string() }
+    }
+}
+
+impl From<String> for HyperReviewError {
+    fn from(s: String) -> Self {
+        Self::Other { message: s }
+    }
+}
+
 
 impl HyperReviewError {
     /// Create a repository not found error
@@ -132,6 +157,21 @@ impl HyperReviewError {
     /// Create a configuration error
     pub fn config(message: String) -> Self {
         Self::Config { message }
+    }
+
+    /// Create an encryption error
+    pub fn encryption(message: String) -> Self {
+        Self::Encryption(message)
+    }
+
+    /// Create a decryption error
+    pub fn decryption(message: String) -> Self {
+        Self::Decryption(message)
+    }
+
+    /// Create a hashing error
+    pub fn hashing(message: String) -> Self {
+        Self::Hashing(message)
     }
 
     /// Create an other error

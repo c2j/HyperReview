@@ -4,6 +4,8 @@
 pub mod general;
 pub mod task_commands;
 pub mod text_parser;
+pub mod gerrit_test;
+pub mod persistence_commands;
 
 #[cfg(test)]
 pub mod test_create_task_core;

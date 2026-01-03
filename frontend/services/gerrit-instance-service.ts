@@ -17,7 +17,7 @@ import {
   GerritErrorCode,
   isApiError
 } from '../api/types/gerrit';
-import { validateInstanceConfig } from '../utils/validation';
+
 
 /**
  * Gerrit Instance Service Implementation
@@ -37,7 +37,7 @@ export class GerritInstanceServiceImpl implements GerritInstanceService {
   async getInstances(includeInactive: boolean = false): Promise<GerritInstance[]> {
     try {
       const response = await invoke<{ success: boolean; instances: GerritInstance[] }>('gerrit_get_instances', {
-        params: { include_inactive }
+        params: { includeInactive }
       });
 
       if (!response.success) {
@@ -101,7 +101,7 @@ export class GerritInstanceServiceImpl implements GerritInstanceService {
 
       // Validate updates
       const updatedInstance = { ...instance, ...updates };
-      const validationErrors = validateInstanceConfig(updatedInstance);
+      const validationErrors = this.validateInstanceConfig(updatedInstance);
       if (validationErrors.length > 0) {
         throw this.createValidationError(validationErrors);
       }
@@ -208,7 +208,9 @@ export class GerritInstanceServiceImpl implements GerritInstanceService {
    * Validate instance configuration
    */
   validateInstanceConfig(config: Partial<GerritInstance>): ValidationError[] {
-    return validateInstanceConfig(config);
+    // Import validation function from utils
+    const { validateInstanceConfig: validateConfig } = require('../utils/validation');
+    return validateConfig(config);
   }
 
   /**

@@ -31,6 +31,31 @@ pub enum ConnectionStatus {
     NetworkError,
 }
 
+impl std::fmt::Display for ConnectionStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectionStatus::Connected => write!(f, "Connected"),
+            ConnectionStatus::Disconnected => write!(f, "Disconnected"),
+            ConnectionStatus::AuthenticationFailed => write!(f, "AuthenticationFailed"),
+            ConnectionStatus::VersionIncompatible => write!(f, "VersionIncompatible"),
+            ConnectionStatus::NetworkError => write!(f, "NetworkError"),
+        }
+    }
+}
+
+impl ConnectionStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s {
+            "Connected" => ConnectionStatus::Connected,
+            "Disconnected" => ConnectionStatus::Disconnected,
+            "AuthenticationFailed" => ConnectionStatus::AuthenticationFailed,
+            "VersionIncompatible" => ConnectionStatus::VersionIncompatible,
+            "NetworkError" => ConnectionStatus::NetworkError,
+            _ => ConnectionStatus::Disconnected,
+        }
+    }
+}
+
 /// Gerrit Change Entity
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct GerritChange {
@@ -68,7 +93,7 @@ pub enum ChangeStatus {
     Abandoned,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ImportStatus {
     Pending,
     Importing,
@@ -77,7 +102,7 @@ pub enum ImportStatus {
     Outdated,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ConflictStatus {
     None,
     CommentsPending,
@@ -121,7 +146,7 @@ pub struct CommentRange {
     pub end_character: u32,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum CommentSyncStatus {
     LocalOnly,         // Created locally, not synced
     SyncPending,       // Queued for sync
@@ -325,7 +350,7 @@ pub enum OperationType {
     PushPatchSet,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
 pub enum OperationPriority {
     Low,
     Normal,
@@ -443,14 +468,7 @@ pub struct SearchParams {
     pub query_type: QueryType,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct SearchResult {
-    pub success: bool,
-    pub query_id: String,
-    pub results: Vec<SearchResult>,
-    pub total_count: u32,
-    pub message: String,
-}
+
 
 /// Helper Functions
 

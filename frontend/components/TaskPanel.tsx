@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useTaskStore } from '../store/taskStore';
 import { Plus, FolderOpen, CheckCircle2, Clock, Filter, X } from 'lucide-react';
-import type { TaskSummary, TaskStatus } from '../types/task';
+import type { TaskStatus } from '../types/task';
 
 interface TaskPanelProps {
   onTaskSelect: (taskId: string) => void;

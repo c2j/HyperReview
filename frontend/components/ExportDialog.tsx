@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import Modal from '@components/Modal';
 import { FileDown, Download } from 'lucide-react';
+import { useLocalTasks } from '@hooks/useLocalTasks';
 
 interface ExportDialogProps {
   isOpen: boolean;
@@ -16,20 +17,18 @@ const ExportDialog: React.FC<ExportDialogProps> = ({ isOpen, onClose, taskId, ta
   const [includeComments, setIncludeComments] = useState(true);
   const [includeProgress, setIncludeProgress] = useState(true);
   const [isExporting, setIsExporting] = useState(false);
+  const { exportTask } = useLocalTasks();
 
   const handleExport = async () => {
     if (!taskId) return;
 
     setIsExporting(true);
     try {
-      const { exportTask, exportAllTasks } = await import('@hooks/useLocalTasks');
-      const { exportTask: exportTaskFn, exportAllTasks: exportAllFn } = exportTask();
-
       let content: string;
       if (taskId) {
-        content = await exportTaskFn(taskId);
+        content = await exportTask(taskId);
       } else {
-        content = await exportAllFn();
+        content = '';
       }
 
       const fileName = taskId ? `${taskName}_export` : 'all_tasks_export';

@@ -23,6 +23,7 @@ import {
   GerritInstance,
   GerritChange,
   GerritComment,
+  GerritReview,
   ValidationError,
   ConnectionStatus,
   ChangeStatus,
@@ -31,23 +32,7 @@ import {
   CommentSide,
   CommentSyncStatus,
   ReviewStatus,
-  NotifyHandling,
-  FileChangeType,
-  FileStatus,
-  PatchSetKind,
-  SyncType,
-  SyncOperationStatus,
-  OperationType,
-  OperationPriority,
-  OperationStatus,
-  QueryType,
-  QueryStatus,
-  ImportMode,
-  BatchMode,
-  ConflictType,
-  ImportStage,
-  DiffLineType,
-  GerritErrorCode
+  NotifyHandling
 } from '../api/types/gerrit';
 
 // ============================================================================
@@ -620,35 +605,253 @@ export function validateComments(value: any): ValidationResult<Comment[]> {
 }
 
 // ============================================================================
-// Utility Functions
+// Gerrit Integration Validation Functions
 // ============================================================================
 
 /**
- * Validate optional field
+ * Type guard for GerritInstance
  */
-export function validateOptional<T>(
-  value: any,
-  validator: (value: any) => ValidationResult<T>
-): ValidationResult<T | undefined> {
-  if (value === undefined || value === null) {
-    return { valid: true, value: undefined };
-  }
-  return validator(value);
+export function isGerritInstance(value: any): value is GerritInstance {
+  return (
+    value &&
+    typeof value === 'object' &&
+    typeof value.id === 'string' &&
+    typeof value.name === 'string' &&
+    typeof value.url === 'string' &&
+    typeof value.username === 'string' &&
+    typeof value.passwordEncrypted === 'boolean' &&
+    typeof value.version === 'string' &&
+    typeof value.isActive === 'boolean' &&
+    (value.lastConnected === null || typeof value.lastConnected === 'string') &&
+    Object.values(ConnectionStatus).includes(value.connectionStatus) &&
+    typeof value.pollingInterval === 'number' &&
+    typeof value.maxChanges === 'number' &&
+    typeof value.createdAt === 'string' &&
+    typeof value.updatedAt === 'string'
+  );
 }
 
 /**
- * Validate required field
+ * Type guard for GerritChange
  */
-export function validateRequired<T>(
-  value: any,
-  validator: (value: any) => ValidationResult<T>,
-  fieldName: string
-): ValidationResult<T> {
-  if (value === undefined || value === null) {
-    return {
-      valid: false,
-      error: `Required field '${fieldName}' is missing`
-    };
+export function isGerritChange(value: any): value is GerritChange {
+  return (
+    value &&
+    typeof value === 'object' &&
+    typeof value.id === 'string' &&
+    typeof value.changeId === 'string' &&
+    typeof value.instanceId === 'string' &&
+    typeof value.project === 'string' &&
+    typeof value.branch === 'string' &&
+    typeof value.subject === 'string' &&
+    Object.values(ChangeStatus).includes(value.status) &&
+    typeof value.owner === 'object' &&
+    typeof value.created === 'string' &&
+    typeof value.updated === 'string' &&
+    typeof value.insertions === 'number' &&
+    typeof value.deletions === 'number' &&
+    typeof value.currentRevision === 'string' &&
+    typeof value.currentPatchSetNum === 'number' &&
+    Array.isArray(value.patchSets) &&
+    Array.isArray(value.files) &&
+    typeof value.totalFiles === 'number' &&
+    typeof value.reviewedFiles === 'number' &&
+    typeof value.localComments === 'number' &&
+    typeof value.remoteComments === 'number' &&
+    Object.values(ImportStatus).includes(value.importStatus) &&
+    (value.lastSync === null || typeof value.lastSync === 'string') &&
+    Object.values(ConflictStatus).includes(value.conflictStatus) &&
+    typeof value.metadata === 'object'
+  );
+}
+
+/**
+ * Type guard for GerritComment
+ */
+export function isGerritComment(value: any): value is GerritComment {
+  return (
+    value &&
+    typeof value === 'object' &&
+    typeof value.id === 'string' &&
+    (value.gerritCommentId === null || typeof value.gerritCommentId === 'string') &&
+    typeof value.changeId === 'string' &&
+    typeof value.patchSetId === 'string' &&
+    typeof value.filePath === 'string' &&
+    Object.values(CommentSide).includes(value.side) &&
+    typeof value.line === 'number' &&
+    (value.range === null || typeof value.range === 'object') &&
+    typeof value.message === 'string' &&
+    typeof value.author === 'object' &&
+    typeof value.created === 'string' &&
+    typeof value.updated === 'string' &&
+    Object.values(CommentSyncStatus).includes(value.status) &&
+    typeof value.unresolved === 'boolean' &&
+    (value.parent === null || typeof value.parent === 'string') &&
+    (value.robotId === null || typeof value.robotId === 'string') &&
+    typeof value.properties === 'object'
+  );
+}
+
+/**
+ * Type guard for GerritReview
+ */
+export function isGerritReview(value: any): value is GerritReview {
+  return (
+    value &&
+    typeof value === 'object' &&
+    typeof value.id === 'string' &&
+    (value.gerritReviewId === null || typeof value.gerritReviewId === 'string') &&
+    typeof value.changeId === 'string' &&
+    typeof value.patchSetId === 'string' &&
+    typeof value.message === 'string' &&
+    typeof value.labels === 'object' &&
+    Array.isArray(value.comments) &&
+    typeof value.author === 'object' &&
+    typeof value.created === 'string' &&
+    (value.submitted === null || typeof value.submitted === 'string') &&
+    Object.values(ReviewStatus).includes(value.status) &&
+    typeof value.draft === 'boolean' &&
+    Object.values(NotifyHandling).includes(value.notify)
+  );
+}
+
+/**
+ * Validate Gerrit instance configuration
+ */
+export function validateInstanceConfig(config: any): ValidationError[] {
+  const errors: ValidationError[] = [];
+
+  if (!config || typeof config !== 'object') {
+    errors.push({ field: 'config', message: 'Configuration must be an object' });
+    return errors;
   }
-  return validator(value);
+
+  // Validate name
+  if (typeof config.name !== 'string' || config.name.trim().length === 0) {
+    errors.push({ field: 'name', message: 'Name is required and cannot be empty' });
+  } else if (config.name.length > 100) {
+    errors.push({ field: 'name', message: 'Name must be 100 characters or less' });
+  }
+
+  // Validate URL
+  if (typeof config.url !== 'string' || config.url.trim().length === 0) {
+    errors.push({ field: 'url', message: 'URL is required and cannot be empty' });
+  } else {
+    try {
+      const url = new URL(config.url);
+      if (url.protocol !== 'https:') {
+        errors.push({ field: 'url', message: 'URL must use HTTPS protocol' });
+      }
+    } catch {
+      errors.push({ field: 'url', message: 'URL must be a valid HTTPS URL' });
+    }
+  }
+
+  // Validate username
+  if (typeof config.username !== 'string' || config.username.trim().length === 0) {
+    errors.push({ field: 'username', message: 'Username is required and cannot be empty' });
+  } else if (config.username.length > 255) {
+    errors.push({ field: 'username', message: 'Username must be 255 characters or less' });
+  }
+
+  // Validate password
+  if (typeof config.password !== 'string' || config.password.trim().length === 0) {
+    errors.push({ field: 'password', message: 'Password is required and cannot be empty' });
+  }
+
+  // Validate polling interval (optional)
+  if (config.pollingInterval !== undefined && config.pollingInterval !== null) {
+    if (typeof config.pollingInterval !== 'number' || config.pollingInterval < 60 || config.pollingInterval > 3600) {
+      errors.push({ field: 'pollingInterval', message: 'Polling interval must be between 60 and 3600 seconds' });
+    }
+  }
+
+  // Validate max changes (optional)
+  if (config.maxChanges !== undefined && config.maxChanges !== null) {
+    if (typeof config.maxChanges !== 'number' || config.maxChanges < 10 || config.maxChanges > 1000) {
+      errors.push({ field: 'maxChanges', message: 'Max changes must be between 10 and 1000' });
+    }
+  }
+
+  return errors;
+}
+
+/**
+ * Validate and return GerritInstance
+ */
+export function validateGerritInstance(value: any): ValidationResult<GerritInstance> {
+  if (isGerritInstance(value)) {
+    return { valid: true, value };
+  }
+  return {
+    valid: false,
+    error: 'Invalid GerritInstance object'
+  };
+}
+
+/**
+ * Validate and return GerritChange
+ */
+export function validateGerritChange(value: any): ValidationResult<GerritChange> {
+  if (isGerritChange(value)) {
+    return { valid: true, value };
+  }
+  return {
+    valid: false,
+    error: 'Invalid GerritChange object'
+  };
+}
+
+/**
+ * Validate and return GerritComment
+ */
+export function validateGerritComment(value: any): ValidationResult<GerritComment> {
+  if (isGerritComment(value)) {
+    return { valid: true, value };
+  }
+  return {
+    valid: false,
+    error: 'Invalid GerritComment object'
+  };
+}
+
+/**
+ * Validate and return GerritReview
+ */
+export function validateGerritReview(value: any): ValidationResult<GerritReview> {
+  if (isGerritReview(value)) {
+    return { valid: true, value };
+  }
+  return {
+    valid: false,
+    error: 'Invalid GerritReview object'
+  };
+}
+
+/**
+ * Validate and return array of GerritInstances
+ */
+export function validateGerritInstanceArray(value: any): value is GerritInstance[] {
+  return Array.isArray(value) && value.every(isGerritInstance);
+}
+
+/**
+ * Validate and return array of GerritChanges
+ */
+export function validateGerritChangeArray(value: any): value is GerritChange[] {
+  return Array.isArray(value) && value.every(isGerritChange);
+}
+
+/**
+ * Validate and return array of GerritComments
+ */
+export function validateGerritCommentArray(value: any): value is GerritComment[] {
+  return Array.isArray(value) && value.every(isGerritComment);
+}
+
+/**
+ * Validate and return array of GerritReviews
+ */
+export function validateGerritReviewArray(value: any): value is GerritReview[] {
+  return Array.isArray(value) && value.every(isGerritReview);
 }

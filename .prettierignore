@@ -1,0 +1,26 @@
+# Dependencies
+node_modules/
+dist/
+build/
+coverage/
+
+# Package manager files
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Environment files
+.env*
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+*.min.js
+*.min.css

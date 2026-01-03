@@ -25,6 +25,7 @@ import { useApiClient } from '../api/client';
 import { save } from '@tauri-apps/api/dialog';
 import { writeTextFile } from '@tauri-apps/api/fs';
 import type { Task, FileNode, FileReviewStatus } from '../api/types';
+import GerritChangeList from './GerritChangeList';
 
 interface TaskTreeProps {
   activeTaskId: string;
@@ -34,11 +35,13 @@ interface TaskTreeProps {
   onSelectFile?: (path: string) => void;
   diffContext?: { base: string; head: string };
   selectedFile?: string | null;
+  gerritRefreshKey?: number;
 }
 
 enum LeftTab {
   GIT = 'git',
   LOCAL = 'local',
+  GERRIT = 'gerrit',
   FILES = 'files',
 }
 
@@ -186,6 +189,7 @@ const TaskTree: React.FC<TaskTreeProps> = ({
   onSelectFile,
   diffContext,
   selectedFile,
+  gerritRefreshKey,
 }) => {
   const { t } = useTranslation();
   const { getTasks, getLocalTasks, getFileTree, markTaskCompleted, exportTaskReview } =
@@ -389,6 +393,13 @@ const TaskTree: React.FC<TaskTreeProps> = ({
           title="Local Tasks"
         >
           <List size={16} />
+        </button>
+        <button
+          onClick={() => setActiveTab(LeftTab.GERRIT)}
+          className={`flex-1 py-2 flex justify-center items-center border-b-2 transition-colors ${activeTab === LeftTab.GERRIT ? 'border-editor-accent text-white' : 'border-transparent text-gray-500 hover:text-gray-300'}`}
+          title="Gerrit Changes"
+        >
+          <GitPullRequest size={16} />
         </button>
         <button
           onClick={() => setActiveTab(LeftTab.FILES)}
@@ -814,7 +825,18 @@ const TaskTree: React.FC<TaskTreeProps> = ({
               </div>
             )}
 
-            {/* Panel 3: File Tree */}
+            {/* Panel 3: Gerrit Changes */}
+            {activeTab === LeftTab.GERRIT && (
+              <div className="flex flex-col h-full">
+                <GerritChangeList
+                  refreshKey={gerritRefreshKey}
+                  onSelectChange={(change) => onSelectTask(change.id)}
+                  onClose={() => {}}
+                />
+              </div>
+            )}
+
+            {/* Panel 4: File Tree */}
             {activeTab === LeftTab.FILES && (
               <div className="flex flex-col">
                 <div className="px-2 text-xs font-bold text-gray-400 uppercase tracking-wider mb-2 mt-1 flex justify-between items-center">

@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import Modal from '@components/Modal';
 import { useTaskStore } from '@store/taskStore';
-import type { LocalTask } from '@types/task';
+import type { LocalTask } from '../types/task';
+import { useLocalTasks } from '@hooks/useLocalTasks';
 
 interface CreateLocalTaskModalProps {
   isOpen: boolean;
@@ -22,6 +23,7 @@ const CreateLocalTaskModal: React.FC<CreateLocalTaskModalProps> = ({
   const [isLoading, setIsLoading] = useState(false);
 
   const { fetchTasks } = useTaskStore();
+  const { createTask } = useLocalTasks();
 
   const handleItemsTextChange = (text: string) => {
     setItemsText(text);
@@ -40,10 +42,7 @@ const CreateLocalTaskModal: React.FC<CreateLocalTaskModalProps> = ({
 
     setIsLoading(true);
     try {
-      const { createTask } = await import('@hooks/useLocalTasks');
-      const { createTask: createTaskFn } = createTask();
-
-      const task = await createTaskFn(name, repoPath, baseRef, itemsText);
+      const task = await createTask(name, repoPath, baseRef, itemsText);
 
       if (onTaskCreated) {
         onTaskCreated(task);

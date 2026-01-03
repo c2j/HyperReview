@@ -14,6 +14,18 @@
     "noEmit": true,
     "jsx": "react-jsx",
 
+    /* Path Aliases */
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./frontend/*"],
+      "@components/*": ["./frontend/components/*"],
+      "@api/*": ["./frontend/api/*"],
+      "@hooks/*": ["./frontend/hooks/*"],
+      "@utils/*": ["./frontend/utils/*"],
+      "@types/*": ["./frontend/types/*"],
+      "@store/*": ["./frontend/store/*"]
+    },
+
     /* Linting */
     "strict": true,
     "noUnusedLocals": true,
@@ -21,5 +33,6 @@
     "noFallthroughCasesInSwitch": true
   },
   "include": ["frontend"],
+  "exclude": ["frontend/__tests__", "**/__tests__", "**/*.test.ts", "**/*.test.tsx"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
