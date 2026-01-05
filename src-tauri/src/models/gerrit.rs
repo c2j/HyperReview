@@ -255,7 +255,7 @@ pub enum NotifyHandling {
     All,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum FileChangeType {
     Added,
     Modified,

@@ -42,6 +42,10 @@ pub mod services {
     pub mod encryption;
     pub mod credential_store;
     pub mod change_downloader;
+    pub mod review_session;
+    pub mod file_storage;
+    pub mod diff_engine;
+    pub mod file_tree;
 }
 
 pub mod remote {
@@ -215,6 +219,48 @@ pub fn run() {
             commands::change_download_commands::gerrit_get_downloaded_files,
             commands::change_download_commands::gerrit_is_change_downloaded,
             commands::change_download_commands::gerrit_delete_downloaded_change,
+
+            // Review session commands
+            commands::review_session_commands::gerrit_create_review_session,
+            commands::review_session_commands::gerrit_get_review_session,
+            commands::review_session_commands::gerrit_update_review_session,
+            commands::review_session_commands::gerrit_switch_review_mode,
+            commands::review_session_commands::gerrit_update_review_progress,
+            commands::review_session_commands::gerrit_get_sessions_for_reviewer,
+            commands::review_session_commands::gerrit_get_active_sessions,
+            commands::review_session_commands::gerrit_abandon_session,
+            commands::review_session_commands::gerrit_mark_ready_for_submission,
+            commands::review_session_commands::gerrit_recover_session,
+
+            // File storage commands
+            commands::file_storage_commands::file_storage_init,
+            commands::file_storage_commands::file_storage_store_file,
+            commands::file_storage_commands::file_storage_get_file,
+            commands::file_storage_commands::file_storage_is_cached,
+            commands::file_storage_commands::file_storage_list_files,
+            commands::file_storage_commands::file_storage_remove_files,
+            commands::file_storage_commands::file_storage_cleanup,
+            commands::file_storage_commands::file_storage_get_stats,
+
+            // Diff engine commands
+            commands::diff_engine_commands::diff_generate_unified,
+            commands::diff_engine_commands::diff_generate_side_by_side,
+            commands::diff_engine_commands::diff_create_line_mapping,
+            commands::diff_engine_commands::diff_navigate_to_line,
+            commands::diff_engine_commands::diff_get_context_around_line,
+            commands::diff_engine_commands::diff_get_config,
+            commands::diff_engine_commands::diff_update_config,
+
+            // File tree commands
+            commands::file_tree_commands::file_tree_build,
+            commands::file_tree_commands::file_tree_search,
+            commands::file_tree_commands::file_tree_filter,
+            commands::file_tree_commands::file_tree_get_stats,
+            commands::file_tree_commands::file_tree_toggle_node,
+            commands::file_tree_commands::file_tree_get_visible_nodes,
+            commands::file_tree_commands::file_tree_get_default_config,
+            commands::file_tree_commands::file_tree_update_config,
+            commands::file_tree_commands::file_tree_create_search_criteria,
 
             // Search and configuration commands
             commands::general::search,

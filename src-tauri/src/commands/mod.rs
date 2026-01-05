@@ -9,6 +9,10 @@ pub mod gerrit_simple;
 pub mod gerrit_commands;
 pub mod persistence_commands;
 pub mod change_download_commands;
+pub mod review_session_commands;
+pub mod file_storage_commands;
+pub mod diff_engine_commands;
+pub mod file_tree_commands;
 
 #[cfg(test)]
 pub mod test_create_task_core;

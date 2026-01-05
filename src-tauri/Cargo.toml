@@ -49,6 +49,12 @@ aes-gcm = "0.10"
 argon2 = "0.5"
 password-hash = "0.5"
 
+# File hashing
+sha2 = "0.10"
+
+# Temporary directories for testing
+tempfile = "3.8"
+
 # Concurrency
 rayon = "1.8"
 
@@ -89,10 +95,6 @@ base64 = "0.22"
 
 # Random
 rand = "0.8"
-
-# Testing
-tempfile = "3.8"
-mockito = "1.0"
 
 # Security: Force upgrade of idna to fix RUSTSEC-2024-0421
 idna = "1.0.3"

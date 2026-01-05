@@ -1782,6 +1782,94 @@ impl Database {
         Ok(sessions)
     }
 
+    /// Store or update a review session
+    pub fn store_review_session(&self, session: &crate::models::gerrit::ReviewSession) -> Result<(), HyperReviewError> {
+        let progress_json = serde_json::to_string(&session.progress).unwrap_or_default();
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO review_sessions 
+             (id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                session.id,
+                session.change_id,
+                session.patch_set_number,
+                session.reviewer_id,
+                session.mode.to_string(),
+                session.status.to_string(),
+                progress_json,
+                session.created_at,
+                session.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all review sessions for a reviewer
+    pub fn get_review_sessions_for_reviewer(&self, reviewer_id: &str) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE reviewer_id = ?1 ORDER BY updated_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![reviewer_id], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            sessions.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(sessions)
+    }
+
+    /// Get active review sessions (in progress)
+    pub fn get_active_review_sessions(&self) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE status = 'in_progress' ORDER BY updated_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map([], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            sessions.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(sessions)
+    }
+
     // ============================================================================
     // Change File Management Methods
     // ============================================================================
