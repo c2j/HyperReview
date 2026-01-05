@@ -1175,9 +1175,87 @@ impl Database {
                 UNIQUE(instance_id, change_id)
             );
 
+            -- Review Sessions table for managing review workflows
+            CREATE TABLE IF NOT EXISTS review_sessions (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                patch_set_number INTEGER NOT NULL,
+                reviewer_id TEXT NOT NULL,
+                mode TEXT NOT NULL, -- 'online', 'offline', 'hybrid'
+                status TEXT NOT NULL, -- 'in_progress', 'ready_for_submission', 'submitted', 'abandoned'
+                progress_data TEXT NOT NULL DEFAULT '{}', -- JSON: {total_files, reviewed_files, files_with_comments, pending_files}
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(change_id) ON DELETE CASCADE
+            );
+
+            -- Downloaded Change Files for offline review
+            CREATE TABLE IF NOT EXISTS change_files (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                patch_set_number INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                change_type TEXT NOT NULL, -- 'added', 'modified', 'deleted', 'renamed', 'copied'
+                old_content TEXT,
+                new_content TEXT,
+                diff_data TEXT NOT NULL, -- JSON: unified diff and metadata
+                file_size INTEGER NOT NULL DEFAULT 0,
+                downloaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(change_id, patch_set_number, file_path),
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(change_id) ON DELETE CASCADE
+            );
+
+            -- File Reviews for tracking review progress per file
+            CREATE TABLE IF NOT EXISTS file_reviews (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                review_status TEXT NOT NULL, -- 'pending', 'in_progress', 'reviewed', 'has_comments', 'approved', 'needs_work'
+                last_reviewed TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES review_sessions(id) ON DELETE CASCADE
+            );
+
+            -- Review Comments for inline and file-level comments
+            CREATE TABLE IF NOT EXISTS review_comments (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                line_number INTEGER, -- NULL for file-level comments
+                content TEXT NOT NULL,
+                comment_type TEXT NOT NULL, -- 'inline', 'file_level', 'general', 'suggestion', 'question', 'issue'
+                status TEXT NOT NULL, -- 'draft', 'published', 'resolved', 'acknowledged'
+                parent_comment_id TEXT, -- For threaded comments
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES review_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_comment_id) REFERENCES review_comments(id) ON DELETE CASCADE
+            );
+
+            -- Review Templates for reusable review patterns
+            CREATE TABLE IF NOT EXISTS review_templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                file_patterns TEXT NOT NULL, -- JSON array of file patterns
+                template_content TEXT NOT NULL,
+                category TEXT,
+                usage_count INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
             CREATE INDEX IF NOT EXISTS idx_gerrit_changes_instance ON gerrit_changes(instance_id);
             CREATE INDEX IF NOT EXISTS idx_gerrit_changes_status ON gerrit_changes(status);
             CREATE INDEX IF NOT EXISTS idx_gerrit_changes_import_status ON gerrit_changes(import_status);
+            CREATE INDEX IF NOT EXISTS idx_review_sessions_change ON review_sessions(change_id);
+            CREATE INDEX IF NOT EXISTS idx_review_sessions_status ON review_sessions(status);
+            CREATE INDEX IF NOT EXISTS idx_change_files_change ON change_files(change_id, patch_set_number);
+            CREATE INDEX IF NOT EXISTS idx_file_reviews_session ON file_reviews(session_id);
+            CREATE INDEX IF NOT EXISTS idx_review_comments_session ON review_comments(session_id);
+            CREATE INDEX IF NOT EXISTS idx_review_comments_file ON review_comments(file_path);
+            CREATE INDEX IF NOT EXISTS idx_review_templates_category ON review_templates(category);
         ").map_err(HyperReviewError::Database)?;
 
         // Migration: Add missing columns to existing tables if they don't exist
@@ -1599,4 +1677,335 @@ impl Database {
             .map_err(HyperReviewError::Database)?;
         Ok(rows_affected)
     }
+
+    // ============================================================================
+    // Review Session Management Methods
+    // ============================================================================
+
+    /// Create a new review session
+    pub fn create_review_session(&self, session: &crate::models::gerrit::ReviewSession) -> Result<(), HyperReviewError> {
+        let progress_json = serde_json::to_string(&session.progress).unwrap_or_default();
+        
+        self.conn.execute(
+            "INSERT INTO review_sessions 
+             (id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                session.id,
+                session.change_id,
+                session.patch_set_number,
+                session.reviewer_id,
+                session.mode.to_string(),
+                session.status.to_string(),
+                progress_json,
+                session.created_at,
+                session.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get a review session by ID
+    pub fn get_review_session(&self, session_id: &str) -> Result<Option<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let result = stmt.query_row(params![session_id], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        });
+
+        match result {
+            Ok(session) => Ok(Some(session)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database(e)),
+        }
+    }
+
+    /// Update review session progress
+    pub fn update_review_session_progress(&self, session_id: &str, progress: &crate::models::gerrit::ReviewProgress) -> Result<(), HyperReviewError> {
+        let progress_json = serde_json::to_string(progress).unwrap_or_default();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        self.conn.execute(
+            "UPDATE review_sessions SET progress_data = ?1, updated_at = ?2 WHERE id = ?3",
+            params![progress_json, now, session_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all review sessions for a change
+    pub fn get_review_sessions_for_change(&self, change_id: &str) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE change_id = ?1 ORDER BY created_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![change_id], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            sessions.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(sessions)
+    }
+
+    // ============================================================================
+    // Change File Management Methods
+    // ============================================================================
+
+    /// Store downloaded change files
+    pub fn store_change_file(&self, file: &crate::models::gerrit::ChangeFile) -> Result<(), HyperReviewError> {
+        let diff_json = serde_json::to_string(&file.diff).unwrap_or_default();
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO change_files 
+             (id, change_id, patch_set_number, file_path, change_type, old_content, new_content, diff_data, file_size, downloaded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                file.id,
+                file.change_id,
+                file.patch_set_number,
+                file.file_path,
+                file.change_type.to_string(),
+                file.old_content,
+                file.new_content,
+                diff_json,
+                file.file_size,
+                file.downloaded_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all files for a change and patch set
+    pub fn get_change_files(&self, change_id: &str, patch_set_number: u32) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, file_path, change_type, old_content, new_content, diff_data, file_size, downloaded_at
+             FROM change_files WHERE change_id = ?1 AND patch_set_number = ?2 ORDER BY file_path"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![change_id, patch_set_number], |row| {
+            let diff_json: String = row.get(7)?;
+            let diff = serde_json::from_str(&diff_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ChangeFile {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                file_path: row.get(3)?,
+                change_type: crate::models::gerrit::FileChangeType::from_string(&row.get::<_, String>(4)?),
+                old_content: row.get(5)?,
+                new_content: row.get(6)?,
+                diff,
+                file_size: row.get(8)?,
+                downloaded_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut files = Vec::new();
+        for row in rows {
+            files.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(files)
+    }
+
+    /// Check if change files are downloaded
+    pub fn is_change_downloaded(&self, change_id: &str, patch_set_number: u32) -> Result<bool, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COUNT(*) FROM change_files WHERE change_id = ?1 AND patch_set_number = ?2"
+        ).map_err(HyperReviewError::Database)?;
+
+        let count: i64 = stmt.query_row(params![change_id, patch_set_number], |row| row.get(0))
+            .map_err(HyperReviewError::Database)?;
+
+        Ok(count > 0)
+    }
+
+    // ============================================================================
+    // File Review Management Methods
+    // ============================================================================
+
+    /// Create or update file review status
+    pub fn store_file_review(&self, file_review: &crate::models::gerrit::FileReview) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO file_reviews 
+             (id, session_id, file_path, review_status, last_reviewed, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                file_review.id,
+                file_review.session_id,
+                file_review.file_path,
+                file_review.review_status.to_string(),
+                file_review.last_reviewed,
+                file_review.created_at,
+                file_review.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get file reviews for a session
+    pub fn get_file_reviews_for_session(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::FileReview>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, review_status, last_reviewed, created_at, updated_at
+             FROM file_reviews WHERE session_id = ?1 ORDER BY file_path"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(crate::models::gerrit::FileReview {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                review_status: crate::models::gerrit::FileReviewStatus::from_string(&row.get::<_, String>(3)?),
+                last_reviewed: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut reviews = Vec::new();
+        for row in rows {
+            reviews.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(reviews)
+    }
+
+    // ============================================================================
+    // Review Comment Management Methods
+    // ============================================================================
+
+    /// Store a review comment
+    pub fn store_review_comment(&self, comment: &crate::models::gerrit::ReviewComment) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO review_comments 
+             (id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                comment.id,
+                comment.session_id,
+                comment.file_path,
+                comment.line_number,
+                comment.content,
+                comment.comment_type.to_string(),
+                comment.status.to_string(),
+                comment.parent_comment_id,
+                comment.created_at,
+                comment.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get comments for a file in a session
+    pub fn get_review_comments_for_file(&self, session_id: &str, file_path: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
+             FROM review_comments WHERE session_id = ?1 AND file_path = ?2 ORDER BY line_number, created_at"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![session_id, file_path], |row| {
+            Ok(crate::models::gerrit::ReviewComment {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                line_number: row.get(3)?,
+                content: row.get(4)?,
+                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
+                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
+                parent_comment_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut comments = Vec::new();
+        for row in rows {
+            comments.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(comments)
+    }
+
+    /// Get all comments for a session
+    pub fn get_review_comments_for_session(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
+             FROM review_comments WHERE session_id = ?1 ORDER BY file_path, line_number, created_at"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(crate::models::gerrit::ReviewComment {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                line_number: row.get(3)?,
+                content: row.get(4)?,
+                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
+                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
+                parent_comment_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut comments = Vec::new();
+        for row in rows {
+            comments.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(comments)
+    }
+
+    /// Delete a review comment
+    pub fn delete_review_comment(&self, comment_id: &str) -> Result<bool, HyperReviewError> {
+        let rows_affected = self.conn.execute(
+            "DELETE FROM review_comments WHERE id = ?1",
+            params![comment_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(rows_affected > 0)
+    }
+
+    // ============================================================================
+    // Review Template Management Methods
+    // ============================================================================
+
 }
