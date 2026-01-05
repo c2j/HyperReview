@@ -146,16 +146,20 @@ export class GerritInstanceServiceImpl implements GerritInstanceService {
    */
   async testConnection(instanceId: string): Promise<ConnectionTestResult> {
     try {
-      const response = await invoke<ConnectionTestResult>('gerrit_test_connection', {
-        params: { instanceId }
+      const response = await invoke<ConnectionTestResult>('gerrit_test_connection_by_id', {
+        instance_id: instanceId
       });
 
       // Update instance status in cache
       const instance = this.instances.get(instanceId);
       if (instance) {
-        instance.connectionStatus = response.status;
-        instance.lastConnected = response.serverTime;
-        instance.version = response.gerritVersion;
+        instance.connectionStatus = response.success ? 'Connected' : 'Disconnected';
+        if (response.success) {
+          instance.lastConnected = new Date().toISOString();
+          if (response.version) {
+            instance.version = response.version;
+          }
+        }
         this.instances.set(instanceId, instance);
       }
 
@@ -175,7 +179,16 @@ export class GerritInstanceServiceImpl implements GerritInstanceService {
         throw new Error(`Instance not found: ${instanceId}`);
       }
 
-      // Update all instances to inactive
+      // Call backend to persist the active state
+      const success = await invoke<boolean>('gerrit_set_active_instance_simple', {
+        instance_id: instanceId
+      });
+
+      if (!success) {
+        throw new Error('Failed to set active instance in database');
+      }
+
+      // Update local cache - deactivate all instances
       this.instances.forEach(instance => {
         instance.isActive = false;
         this.instances.set(instance.id, instance);

@@ -3,9 +3,12 @@
 
 use tokio::time::Duration;
 use reqwest::ClientBuilder;
+use reqwest::Client;
 use serde_json::Value;
+use serde::{Serialize, Deserialize};
 use log::{info, error};
 use rand::Rng;
+use std::collections::HashMap;
 
 use crate::models::{SubmitResult, Comment};
 use crate::errors::HyperReviewError;
@@ -87,30 +90,34 @@ impl GerritClient {
         info!("Testing connection to Gerrit: {}", self.base_url);
 
         let url = format!("{}/config/server/info", self.base_url);
+        let username = self.username.clone();
+        let password = self.http_password.clone();
 
         let result = tokio::task::spawn_blocking(move || {
             let client = reqwest::blocking::Client::new();
-
-            let mut request = client
-                .get(&url)
-                .header("Accept", "application/json");
+            let mut request = client.get(&url);
+            
+            // Add basic auth if credentials are available
+            if let (Some(user), Some(pass)) = (username, password) {
+                request = request.basic_auth(user, Some(pass));
+            }
 
             let response = request.send()?;
-
             let status = response.status();
             let body = response.text()?;
 
             if status.is_success() {
                 let cleaned = Self::clean_gerrit_json(&body)?;
-                let server_info = cleaned.as_object().and_then(|v| v.get("gerrit_version"))
+                let json_value: Value = serde_json::from_str(&cleaned)?;
+                let server_info = json_value.as_object().and_then(|v| v.get("gerrit_version"))
                     .and_then(|v| v.as_str())
                     .map(|s| s.to_string());
 
                 let mut features = vec![];
-                if cleaned.as_object().and_then(|v| v.get("auth")).is_some() {
+                if json_value.as_object().and_then(|v| v.get("auth")).is_some() {
                     features.push("Authentication".to_string());
                 }
-                if cleaned.as_object().and_then(|v| v.get("default_theme")).is_some() {
+                if json_value.as_object().and_then(|v| v.get("default_theme")).is_some() {
                     features.push("REST API".to_string());
                 }
 
@@ -121,151 +128,11 @@ impl GerritClient {
                     supported_features: features,
                 })
             } else {
-                let error_msg = format!("HTTP {}: {}", status, body);
-                error!("{}", error_msg);
-                Err(error_msg.into())
-            }
-        }).await.map_err(|e| format!("Task spawn failed: {}", e))?;
-
-        result
-    }
-
-    pub async fn submit_review(
-        &self,
-        change_id: &str,
-        revision_id: &str,
-        comments: Vec<Comment>,
-        vote: Option<i32>,
-    ) -> Result<SubmitResult, HyperReviewError> {
-        info!("Submitting review to Gerrit change {} revision {}", change_id, revision_id);
-
-        if self.username.is_none() || self.http_password.is_none() {
-            return Err("Gerrit credentials not configured. Please configure credentials in settings.".into());
-        }
-
-        let mut review_payload = serde_json::json!({
-            "comments": {},
-            "labels": {},
-            "message": format!("Submitted {} comments via HyperReview", comments.len())
-        });
-
-        let comments_obj = review_payload["comments"].as_object_mut().unwrap();
-        for comment in &comments {
-            if !comment.file_path.is_empty() {
-                let comment_data = serde_json::json!({
-                    "line": comment.line_number,
-                    "message": comment.content
-                });
-
-                let file_path = &comment.file_path;
-                let gerrit_path = if file_path.starts_with('/') {
-                    &file_path[1..]
-                } else {
-                    file_path.as_str()
-                };
-
-                if comments_obj.contains_key(gerrit_path) {
-                    let existing = comments_obj[gerrit_path].clone();
-                    if existing.is_array() {
-                        let mut arr = existing.as_array().unwrap().clone();
-                        arr.push(comment_data);
-                        comments_obj[gerrit_path] = Value::Array(arr);
-                    } else {
-                        comments_obj[gerrit_path] = serde_json::json!([existing, comment_data]);
-                    }
-                } else {
-                    comments_obj[gerrit_path] = comment_data;
-                }
-            }
-        }
-
-        if let Some(score) = vote {
-            review_payload["labels"]["Code-Review"] = serde_json::json!(score);
-        }
-
-        let url = format!(
-            "{}/a/changes/{}/revisions/{}/review",
-            self.base_url, change_id, revision_id
-        );
-
-        info!("POST to Gerrit: {}", url);
-
-        let username = self.username.clone().unwrap();
-        let password = self.http_password.clone().unwrap();
-        let base_url_clone = self.base_url.clone();
-
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let response = client
-                .post(&url)
-                .basic_auth(&username, password)
-                .json(&review_payload)
-                .send()?;
-
-            let status = response.status();
-            let response_text = response.text()?;
-
-            info!("Gerrit response status: {}, body length: {}", status, response_text.len());
-
-            if status.is_success() {
-                info!("Review submitted successfully to Gerrit change {}", change_id);
-                Ok(SubmitResult {
-                    success: true,
-                    message: format!("Successfully submitted {} comments to Gerrit", comments.len()),
-                    external_id: Some(change_id.to_string()),
-                    url: Some(format!("{}/c/{}/{}", base_url_clone, change_id, revision_id)),
-                })
-            } else {
-                let error_msg = format!("Gerrit API error {}: {}", status, response_text);
-                error!("{}", error_msg);
-                Err(error_msg.into())
-            }
-        }).await.map_err(|e| format!("Task spawn failed: {}", e))?;
-
-        result
-    }
-
-    pub async fn query_changes(
-        &self,
-        query: &str,
-    ) -> Result<Vec<GerritChangeInfo>, HyperReviewError> {
-        info!("Querying Gerrit changes with query: {}", query);
-
-        let url = if query.is_empty() {
-            format!("{}/a/changes/?o=CURRENT_REVISION&o=DETAILED_ACCOUNTS", self.base_url)
-        } else {
-            format!(
-                "{}/a/changes/?q={}&o=CURRENT_REVISION&o=DETAILED_ACCOUNTS",
-                self.base_url,
-                urlencoding::encode(query)
-            )
-        };
-
-        info!("GET to Gerrit: {}", url);
-
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
-
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
-
-            if status.is_success() {
-                let cleaned = Self::clean_gerrit_json(&body)?;
-
-                if cleaned.trim().is_empty() {
-                    Ok(vec![])
-                } else {
-                    let changes = serde_json::from_str(&cleaned)?;
-                    Ok(changes)
-                }
-            } else {
                 let error_msg = format!("Gerrit API error {}: {}", status, body);
                 error!("{}", error_msg);
-                Err(error_msg.into())
+                Err(HyperReviewError::other(error_msg))
             }
-        }).await.map_err(|e| format!("Task spawn failed: {}", e))?;
+        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
 
         result
     }
@@ -295,20 +162,20 @@ impl GerritClient {
 
             if status.is_success() {
                 let cleaned = Self::clean_gerrit_json(&body)?;
-                let change = serde_json::from_str(&cleaned)?;
+                let change: GerritChangeInfo = serde_json::from_str(&cleaned)?;
                 info!("Successfully parsed change: {}", change.subject);
                 Ok(change)
             } else {
                 let error_msg = format!("Gerrit API error {}: {}", status, body);
                 error!("{}", error_msg);
-                Err(error_msg.into())
+                Err(HyperReviewError::other(error_msg))
             }
-        }).await.map_err(|e| format!("Task spawn failed: {}", e))?;
+        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
 
         result
     }
 
-    fn clean_gerrit_json(&self, json_text: &str) -> Result<String, HyperReviewError> {
+    fn clean_gerrit_json(json_text: &str) -> Result<String, HyperReviewError> {
         let cleaned = json_text.trim();
         let prefixes = vec![")]}'", ")]}'\n", ")]}'\r\n", "while(1);", "while(1);\n", "for(;;);"];
 
@@ -348,4 +215,132 @@ pub struct GerritChangeInfo {
     pub deletions: Option<i32>,
     pub current_revision: Option<String>,
     pub revisions: Option<serde_json::Value>,
+}
+
+impl GerritClient {
+    /// Get comments for a change
+    pub async fn get_comments(&self, change_id: &str) -> Result<Vec<Comment>, HyperReviewError> {
+        info!("Getting comments for change: {}", change_id);
+        
+        let url = format!("{}/a/changes/{}/comments", self.base_url, change_id);
+        
+        let username = self.username.clone();
+        let password = self.http_password.clone();
+        
+        let result = tokio::task::spawn_blocking(move || {
+            let client = reqwest::blocking::Client::new();
+            let mut request = client.get(&url);
+            
+            // Add basic auth if credentials are available
+            if let (Some(user), Some(pass)) = (username, password) {
+                request = request.basic_auth(user, Some(pass));
+            }
+            
+            let response = request.send()?;
+            let status = response.status();
+            let body = response.text()?;
+            
+            if status.is_success() {
+                let cleaned = Self::clean_gerrit_json(&body)?;
+                // Parse Gerrit comments format and convert to our Comment model
+                // For now, return empty vec until full parsing is implemented
+                Ok(Vec::new())
+            } else {
+                let error_msg = format!("Failed to get comments: HTTP {}: {}", status, body);
+                error!("{}", error_msg);
+                Err(HyperReviewError::other(error_msg))
+            }
+        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
+        
+        result
+    }
+    
+    /// Search for changes
+    pub async fn search_changes(&self, query: &str) -> Result<Vec<GerritChangeInfo>, HyperReviewError> {
+        info!("Searching changes with query: {}", query);
+        
+        let encoded_query = urlencoding::encode(query);
+        let url = format!("{}/a/changes/?q={}&o=CURRENT_REVISION", self.base_url, encoded_query);
+        
+        let username = self.username.clone();
+        let password = self.http_password.clone();
+        
+        let result = tokio::task::spawn_blocking(move || {
+            let client = reqwest::blocking::Client::new();
+            let mut request = client.get(&url);
+            
+            // Add basic auth if credentials are available
+            if let (Some(user), Some(pass)) = (username, password) {
+                request = request.basic_auth(user, Some(pass));
+            }
+            
+            let response = request.send()?;
+            let status = response.status();
+            let body = response.text()?;
+            
+            if status.is_success() {
+                let cleaned = Self::clean_gerrit_json(&body)?;
+                let changes: Vec<GerritChangeInfo> = serde_json::from_str(&cleaned)?;
+                info!("Found {} changes", changes.len());
+                Ok(changes)
+            } else {
+                let error_msg = format!("Failed to search changes: HTTP {}: {}", status, body);
+                error!("{}", error_msg);
+                Err(HyperReviewError::other(error_msg))
+            }
+        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
+        
+        result
+    }
+    
+    /// Submit a review
+    pub async fn submit_review(&self, change_id: &str, review: &ReviewInput) -> Result<(), HyperReviewError> {
+        info!("Submitting review for change: {}", change_id);
+        
+        let url = format!("{}/a/changes/{}/revisions/current/review", self.base_url, change_id);
+        let review_json = serde_json::to_string(review)?;
+        
+        let username = self.username.clone();
+        let password = self.http_password.clone();
+        
+        let result = tokio::task::spawn_blocking(move || {
+            let client = reqwest::blocking::Client::new();
+            let mut request = client.post(&url)
+                .header("Content-Type", "application/json")
+                .body(review_json);
+            
+            // Add basic auth if credentials are available
+            if let (Some(user), Some(pass)) = (username, password) {
+                request = request.basic_auth(user, Some(pass));
+            }
+            
+            let response = request.send()?;
+            let status = response.status();
+            let body = response.text()?;
+            
+            if status.is_success() {
+                info!("Review submitted successfully");
+                Ok(())
+            } else {
+                let error_msg = format!("Failed to submit review: HTTP {}: {}", status, body);
+                error!("{}", error_msg);
+                Err(HyperReviewError::other(error_msg))
+            }
+        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
+        
+        result
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct ReviewInput {
+    pub message: String,
+    pub labels: std::collections::HashMap<String, i32>,
+    pub comments: std::collections::HashMap<String, Vec<CommentInput>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CommentInput {
+    pub line: Option<i32>,
+    pub message: String,
 }

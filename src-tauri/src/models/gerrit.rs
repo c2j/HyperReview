@@ -22,7 +22,7 @@ pub struct GerritInstance {
     pub updated_at: String,            // ISO 8601 timestamp
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ConnectionStatus {
     Connected,
     Disconnected,
@@ -85,12 +85,35 @@ pub struct GerritChange {
     pub metadata: HashMap<String, String>,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ChangeStatus {
     New,
     Draft,
     Merged,
     Abandoned,
+}
+
+impl std::fmt::Display for ChangeStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ChangeStatus::New => write!(f, "new"),
+            ChangeStatus::Draft => write!(f, "draft"),
+            ChangeStatus::Merged => write!(f, "merged"),
+            ChangeStatus::Abandoned => write!(f, "abandoned"),
+        }
+    }
+}
+
+impl ChangeStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "new" => ChangeStatus::New,
+            "draft" => ChangeStatus::Draft,
+            "merged" => ChangeStatus::Merged,
+            "abandoned" => ChangeStatus::Abandoned,
+            _ => ChangeStatus::New, // Default fallback
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
@@ -102,12 +125,60 @@ pub enum ImportStatus {
     Outdated,
 }
 
+impl std::fmt::Display for ImportStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ImportStatus::Pending => write!(f, "pending"),
+            ImportStatus::Importing => write!(f, "importing"),
+            ImportStatus::Imported => write!(f, "imported"),
+            ImportStatus::Failed => write!(f, "failed"),
+            ImportStatus::Outdated => write!(f, "outdated"),
+        }
+    }
+}
+
+impl ImportStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "pending" => ImportStatus::Pending,
+            "importing" => ImportStatus::Importing,
+            "imported" => ImportStatus::Imported,
+            "failed" => ImportStatus::Failed,
+            "outdated" => ImportStatus::Outdated,
+            _ => ImportStatus::Pending, // Default fallback
+        }
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
 pub enum ConflictStatus {
     None,
     CommentsPending,
     PatchSetUpdated,
     ManualResolutionRequired,
+}
+
+impl std::fmt::Display for ConflictStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConflictStatus::None => write!(f, "none"),
+            ConflictStatus::CommentsPending => write!(f, "comments_pending"),
+            ConflictStatus::PatchSetUpdated => write!(f, "patch_set_updated"),
+            ConflictStatus::ManualResolutionRequired => write!(f, "manual_resolution_required"),
+        }
+    }
+}
+
+impl ConflictStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s.to_lowercase().as_str() {
+            "none" => ConflictStatus::None,
+            "comments_pending" => ConflictStatus::CommentsPending,
+            "patch_set_updated" => ConflictStatus::PatchSetUpdated,
+            "manual_resolution_required" => ConflictStatus::ManualResolutionRequired,
+            _ => ConflictStatus::None, // Default fallback
+        }
+    }
 }
 
 /// Gerrit Comment Entity

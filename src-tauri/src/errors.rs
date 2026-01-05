@@ -23,21 +23,15 @@ pub enum HyperReviewError {
 
     /// Repository not found
     #[error("Repository not found: {path}")]
-    RepositoryNotFound {
-        path: String,
-    },
+    RepositoryNotFound { path: String },
 
     /// Invalid repository path
     #[error("Invalid repository path: {path}")]
-    InvalidPath {
-        path: String,
-    },
+    InvalidPath { path: String },
 
     /// Permission denied
     #[error("Permission denied: {operation}")]
-    PermissionDenied {
-        operation: String,
-    },
+    PermissionDenied { operation: String },
 
     /// Validation errors
     #[error("Validation error: {message}")]
@@ -53,23 +47,21 @@ pub enum HyperReviewError {
         status_code: Option<u16>,
     },
 
+    /// Reqwest HTTP errors
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+
     /// Cache errors
     #[error("Cache error: {message}")]
-    Cache {
-        message: String,
-    },
+    Cache { message: String },
 
     /// Analysis errors
     #[error("Analysis error: {message}")]
-    Analysis {
-        message: String,
-    },
+    Analysis { message: String },
 
     /// Configuration errors
     #[error("Configuration error: {message}")]
-    Config {
-        message: String,
-    },
+    Config { message: String },
 
     /// Serialization/deserialization errors
     #[error("Serialization error: {0}")]
@@ -89,14 +81,14 @@ pub enum HyperReviewError {
 
     /// Other errors
     #[error("Error: {message}")]
-    Other {
-        message: String,
-    },
+    Other { message: String },
 }
 
 impl From<&str> for HyperReviewError {
     fn from(s: &str) -> Self {
-        Self::Other { message: s.to_string() }
+        Self::Other {
+            message: s.to_string(),
+        }
     }
 }
 
@@ -105,7 +97,6 @@ impl From<String> for HyperReviewError {
         Self::Other { message: s }
     }
 }
-
 
 impl HyperReviewError {
     /// Create a repository not found error

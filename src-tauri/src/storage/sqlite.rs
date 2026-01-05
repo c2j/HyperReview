@@ -2,8 +2,12 @@
 // Local storage for review metadata
 
 use crate::models::{Repo, Comment, CommentStatus};
-use rusqlite::{Connection, Result};
+use crate::models::gerrit::{GerritInstance, GerritChange, ConnectionStatus, ChangeStatus, ImportStatus, ConflictStatus};
+use crate::errors::HyperReviewError;
+use rusqlite::{Connection, Result, params};
 use serde_json;
+use uuid::Uuid;
+use chrono::Utc;
 
 pub struct Database {
     conn: Connection,
@@ -1117,5 +1121,482 @@ impl Database {
         }
 
         Ok(csv)
+    }
+
+    // ============================================================================
+    // Gerrit Integration Methods
+    // ============================================================================
+
+    /// Create Gerrit tables if they don't exist
+    pub fn init_gerrit_schema(&self) -> Result<(), HyperReviewError> {
+        self.conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS gerrit_instances (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                url TEXT NOT NULL UNIQUE,
+                username TEXT NOT NULL,
+                password_encrypted TEXT NOT NULL,
+                version TEXT DEFAULT '',
+                last_connected TEXT,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                connection_status TEXT NOT NULL DEFAULT 'disconnected',
+                polling_interval INTEGER NOT NULL DEFAULT 300,
+                max_changes INTEGER NOT NULL DEFAULT 100,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS gerrit_changes (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                project TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                status TEXT NOT NULL,
+                owner_name TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                insertions INTEGER NOT NULL DEFAULT 0,
+                deletions INTEGER NOT NULL DEFAULT 0,
+                current_revision TEXT NOT NULL,
+                current_patch_set_num INTEGER NOT NULL,
+                total_files INTEGER NOT NULL DEFAULT 0,
+                reviewed_files INTEGER NOT NULL DEFAULT 0,
+                local_comments INTEGER NOT NULL DEFAULT 0,
+                remote_comments INTEGER NOT NULL DEFAULT 0,
+                import_status TEXT NOT NULL DEFAULT 'pending',
+                last_sync_at TEXT,
+                conflict_status TEXT NOT NULL DEFAULT 'none',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                
+                FOREIGN KEY (instance_id) REFERENCES gerrit_instances(id) ON DELETE CASCADE,
+                UNIQUE(instance_id, change_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_instance ON gerrit_changes(instance_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_status ON gerrit_changes(status);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_import_status ON gerrit_changes(import_status);
+        ").map_err(HyperReviewError::Database)?;
+
+        // Migration: Add missing columns to existing tables if they don't exist
+        // Check if username column exists in gerrit_instances table
+        let check_column = |table_name: &str, col_name: &str| -> rusqlite::Result<bool> {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'",
+                table_name, col_name
+            ))?;
+            let count: i64 = stmt.query_row([], |row| row.get(0))?;
+            Ok(count > 0)
+        };
+
+        // Check if gerrit_instances table exists and has the username column
+        let table_exists = self.conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_instances'")
+            .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
+            .is_ok();
+
+        if table_exists {
+            // Add missing columns if they don't exist
+            if !check_column("gerrit_instances", "username").unwrap_or(false) {
+                log::info!("Adding username column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN username TEXT DEFAULT 'admin'",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "password_encrypted").unwrap_or(false) {
+                log::info!("Adding password_encrypted column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN password_encrypted TEXT DEFAULT ''",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "version").unwrap_or(false) {
+                log::info!("Adding version column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN version TEXT DEFAULT ''",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "last_connected").unwrap_or(false) {
+                log::info!("Adding last_connected column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN last_connected TEXT",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "connection_status").unwrap_or(false) {
+                log::info!("Adding connection_status column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN connection_status TEXT DEFAULT 'disconnected'",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "polling_interval").unwrap_or(false) {
+                log::info!("Adding polling_interval column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN polling_interval INTEGER DEFAULT 300",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "max_changes").unwrap_or(false) {
+                log::info!("Adding max_changes column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN max_changes INTEGER DEFAULT 100",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "created_at").unwrap_or(false) {
+                log::info!("Adding created_at column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "updated_at").unwrap_or(false) {
+                log::info!("Adding updated_at column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+        }
+
+        // Similar migration for gerrit_changes table
+        let changes_table_exists = self.conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_changes'")
+            .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
+            .is_ok();
+
+        if changes_table_exists {
+            if !check_column("gerrit_changes", "insertions").unwrap_or(false) {
+                log::info!("Adding insertions column to gerrit_changes table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_changes ADD COLUMN insertions INTEGER DEFAULT 0",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_changes", "deletions").unwrap_or(false) {
+                log::info!("Adding deletions column to gerrit_changes table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_changes ADD COLUMN deletions INTEGER DEFAULT 0",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Store a Gerrit instance
+    pub fn store_gerrit_instance(&self, instance: &GerritInstance) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO gerrit_instances 
+             (id, name, url, username, password_encrypted, version, last_connected, 
+              is_active, connection_status, polling_interval, max_changes, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                instance.id,
+                instance.name,
+                instance.url,
+                instance.username,
+                instance.password_encrypted,
+                instance.version,
+                instance.last_connected,
+                instance.is_active,
+                instance.connection_status.to_string(),
+                instance.polling_interval,
+                instance.max_changes,
+                instance.created_at,
+                instance.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get a Gerrit instance by ID
+    pub fn get_gerrit_instance(&self, instance_id: &str) -> Result<Option<GerritInstance>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, url, username, password_encrypted, version, last_connected,
+                    is_active, connection_status, polling_interval, max_changes, created_at, updated_at
+             FROM gerrit_instances WHERE id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let result = stmt.query_row(params![instance_id], |row| {
+            Ok(GerritInstance {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                url: row.get(2)?,
+                username: row.get(3)?,
+                password_encrypted: row.get(4)?,
+                version: row.get(5)?,
+                is_active: row.get::<_, i32>(7)? != 0,
+                last_connected: row.get(6)?,
+                connection_status: ConnectionStatus::from_string(&row.get::<_, String>(8)?),
+                polling_interval: row.get(9)?,
+                max_changes: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        });
+
+        match result {
+            Ok(instance) => Ok(Some(instance)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database(e)),
+        }
+    }
+
+    /// Get all Gerrit instances
+    pub fn get_all_gerrit_instances(&self) -> Result<Vec<GerritInstance>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, url, username, password_encrypted, version, last_connected,
+                    is_active, connection_status, polling_interval, max_changes, created_at, updated_at
+             FROM gerrit_instances ORDER BY name"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(GerritInstance {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                url: row.get(2)?,
+                username: row.get(3)?,
+                password_encrypted: row.get(4)?,
+                version: row.get(5)?,
+                is_active: row.get::<_, i32>(7)? != 0,
+                last_connected: row.get(6)?,
+                connection_status: ConnectionStatus::from_string(&row.get::<_, String>(8)?),
+                polling_interval: row.get(9)?,
+                max_changes: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut instances = Vec::new();
+        for row in rows {
+            instances.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(instances)
+    }
+
+    /// Delete a Gerrit instance
+    pub fn delete_gerrit_instance(&self, instance_id: &str) -> Result<bool, HyperReviewError> {
+        let rows_affected = self.conn.execute(
+            "DELETE FROM gerrit_instances WHERE id = ?1",
+            params![instance_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(rows_affected > 0)
+    }
+
+    /// Store a Gerrit change
+    pub fn store_gerrit_change(&self, change: &GerritChange) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO gerrit_changes 
+             (id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
+              created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
+              total_files, reviewed_files, local_comments, remote_comments, import_status, last_sync_at, 
+              conflict_status, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+            params![
+                change.id,
+                change.change_id,
+                change.instance_id,
+                change.project,
+                change.branch,
+                change.subject,
+                change.status.to_string(),
+                change.owner.name,
+                change.owner.email,
+                change.created,
+                change.updated,
+                change.insertions,
+                change.deletions,
+                change.current_revision,
+                change.current_patch_set_num,
+                change.total_files,
+                change.reviewed_files,
+                change.local_comments,
+                change.remote_comments,
+                change.import_status.to_string(),
+                change.last_sync,
+                change.conflict_status.to_string(),
+                serde_json::to_string(&change.metadata).unwrap_or_default()
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get a Gerrit change by ID
+    pub fn get_gerrit_change(&self, change_id: &str) -> Result<Option<GerritChange>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
+                    created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
+                    total_files, reviewed_files, local_comments, remote_comments, import_status, last_sync_at,
+                    conflict_status, metadata
+             FROM gerrit_changes WHERE id = ?1 OR change_id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let result = stmt.query_row(params![change_id], |row| {
+            let metadata_str: String = row.get(22)?;
+            let metadata = serde_json::from_str(&metadata_str).unwrap_or_default();
+
+            Ok(GerritChange {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                instance_id: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                subject: row.get(5)?,
+                status: ChangeStatus::from_string(&row.get::<_, String>(6)?),
+                owner: crate::models::gerrit::GerritUser {
+                    account_id: 0, // TODO: Add account_id to schema
+                    name: row.get(7)?,
+                    email: row.get(8)?,
+                    username: None,
+                    avatar_url: None,
+                },
+                created: row.get(9)?,
+                updated: row.get(10)?,
+                insertions: row.get(11)?,
+                deletions: row.get(12)?,
+                current_revision: row.get(13)?,
+                current_patch_set_num: row.get(14)?,
+                patch_sets: Vec::new(), // TODO: Load from patch_sets table
+                files: Vec::new(),      // TODO: Load from gerrit_files table
+                total_files: row.get(15)?,
+                reviewed_files: row.get(16)?,
+                local_comments: row.get(17)?,
+                remote_comments: row.get(18)?,
+                import_status: ImportStatus::from_string(&row.get::<_, String>(19)?),
+                last_sync: row.get(20)?,
+                conflict_status: ConflictStatus::from_string(&row.get::<_, String>(21)?),
+                metadata,
+            })
+        });
+
+        match result {
+            Ok(change) => Ok(Some(change)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database(e)),
+        }
+    }
+
+    /// Update a Gerrit change
+    pub fn update_gerrit_change(&self, change: &GerritChange) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "UPDATE gerrit_changes SET 
+             subject = ?2, status = ?3, updated_at = ?4, insertions = ?5, deletions = ?6,
+             current_revision = ?7, current_patch_set_num = ?8, total_files = ?9, reviewed_files = ?10,
+             local_comments = ?11, remote_comments = ?12, import_status = ?13,
+             last_sync_at = ?14, conflict_status = ?15, metadata = ?16
+             WHERE id = ?1",
+            params![
+                change.id,
+                change.subject,
+                change.status.to_string(),
+                change.updated,
+                change.insertions,
+                change.deletions,
+                change.current_revision,
+                change.current_patch_set_num,
+                change.total_files,
+                change.reviewed_files,
+                change.local_comments,
+                change.remote_comments,
+                change.import_status.to_string(),
+                change.last_sync,
+                change.conflict_status.to_string(),
+                serde_json::to_string(&change.metadata).unwrap_or_default()
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all Gerrit changes for an instance
+    pub fn get_gerrit_changes_for_instance(&self, instance_id: &str) -> Result<Vec<GerritChange>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
+                    created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
+                    total_files, reviewed_files, local_comments, remote_comments, import_status, last_sync_at,
+                    conflict_status, metadata
+             FROM gerrit_changes WHERE instance_id = ?1 ORDER BY updated_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![instance_id], |row| {
+            let metadata_str: String = row.get(22)?;
+            let metadata = serde_json::from_str(&metadata_str).unwrap_or_default();
+
+            Ok(GerritChange {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                instance_id: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                subject: row.get(5)?,
+                status: ChangeStatus::from_string(&row.get::<_, String>(6)?),
+                owner: crate::models::gerrit::GerritUser {
+                    account_id: 0,
+                    name: row.get(7)?,
+                    email: row.get(8)?,
+                    username: None,
+                    avatar_url: None,
+                },
+                created: row.get(9)?,
+                updated: row.get(10)?,
+                insertions: row.get(11)?,
+                deletions: row.get(12)?,
+                current_revision: row.get(13)?,
+                current_patch_set_num: row.get(14)?,
+                patch_sets: Vec::new(),
+                files: Vec::new(),
+                total_files: row.get(15)?,
+                reviewed_files: row.get(16)?,
+                local_comments: row.get(17)?,
+                remote_comments: row.get(18)?,
+                import_status: ImportStatus::from_string(&row.get::<_, String>(19)?),
+                last_sync: row.get(20)?,
+                conflict_status: ConflictStatus::from_string(&row.get::<_, String>(21)?),
+                metadata,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut changes = Vec::new();
+        for row in rows {
+            changes.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(changes)
+    }
+
+    /// Delete a Gerrit change
+    pub fn delete_gerrit_change(&self, change_id: &str) -> Result<bool, HyperReviewError> {
+        let rows_affected = self.conn.execute(
+            "DELETE FROM gerrit_changes WHERE id = ?1 OR change_id = ?1",
+            params![change_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(rows_affected > 0)
+    }
+
+    /// Clear all Gerrit data (for debugging/testing purposes)
+    pub fn clear_all_gerrit_data(&self) -> Result<usize, HyperReviewError> {
+        let rows_affected = self.conn.execute("DELETE FROM gerrit_instances", [])
+            .map_err(HyperReviewError::Database)?;
+        Ok(rows_affected)
     }
 }

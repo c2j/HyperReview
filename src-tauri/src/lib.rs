@@ -85,7 +85,15 @@ impl AppState {
          // Initialize schema
         database.init_schema()
             .map_err(errors::HyperReviewError::Database)?;
-        log::info!("Database initialized successfully");
+        
+        // Initialize Gerrit schema
+        database.init_gerrit_schema()
+            .map_err(|e| {
+                log::warn!("Failed to initialize Gerrit schema: {}", e);
+                e
+            })?;
+        
+        log::info!("Database and Gerrit schema initialized successfully");
         
         Ok(Self {
             git_service: Arc::new(Mutex::new(git::service::GitService::new())),
@@ -177,6 +185,28 @@ pub fn run() {
             commands::general::create_tag,
 
             // Credential management commands
+            commands::general::store_gerrit_credentials,
+            commands::general::get_gerrit_credentials,
+            commands::general::delete_gerrit_credentials,
+            commands::general::has_gerrit_credentials,
+
+            // Gerrit instance management commands
+            commands::gerrit_test::gerrit_test_connectivity,
+            commands::gerrit_simple::gerrit_get_instances_simple,
+            commands::gerrit_simple::gerrit_create_instance_simple,
+            commands::gerrit_simple::gerrit_delete_instance_simple,
+            commands::gerrit_simple::gerrit_import_change_simple,
+            commands::gerrit_simple::gerrit_search_changes_simple,
+            commands::gerrit_simple::gerrit_clear_all_data_simple,
+            commands::gerrit_simple::gerrit_set_active_instance_simple,
+            commands::gerrit_commands::gerrit_get_instances,
+            commands::gerrit_commands::gerrit_create_instance,
+            commands::gerrit_commands::gerrit_test_connection,
+            commands::gerrit_commands::gerrit_test_connection_by_id,
+            commands::gerrit_commands::gerrit_create_comment_simple,
+            commands::gerrit_commands::gerrit_get_comments_simple,
+            commands::gerrit_commands::gerrit_submit_review_simple,
+
             // Search and configuration commands
             commands::general::search,
             commands::general::get_commands,

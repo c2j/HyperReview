@@ -538,9 +538,8 @@ pub async fn submit_review(
                 .map_err(|e| e.to_string())
         }
         "gerrit" => {
-            let client = remote::gerrit_client::GerritClient::new("https://gerrit.example.com");
-            client.submit_review(project_id, "current", Vec::new(), None)
-                .map_err(|e| e.to_string())
+            // Gerrit client needs async support, temporarily disabled
+            Err("Gerrit integration temporarily disabled".to_string())
         }
         _ => Err(format!("Unsupported review system: {}", system)),
     }

@@ -201,52 +201,16 @@ pub async fn export_all_tasks() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn submit_task_to_gerrit(
-    state: State<'_, crate::AppState>,
-    task_id: String,
-    gerrit_url: String,
-    username: String,
-    change_id: String,
-    revision_id: String,
-    score: Option<i32>,
+    _state: State<'_, crate::AppState>,
+    _task_id: String,
+    _gerrit_url: String,
+    _username: String,
+    _change_id: String,
+    _revision_id: String,
+    _score: Option<i32>,
 ) -> Result<crate::models::SubmitResult, String> {
-    use crate::remote::gerrit_client::GerritClient;
-
-    log::info!("Submitting task {} to Gerrit change {} revision {}", task_id, change_id, revision_id);
-
-    // Retrieve Gerrit credentials
-    let credential_store = state.credential_store.lock().unwrap();
-    let password = match credential_store.retrieve("gerrit", &username) {
-        Ok(Some(cred)) => cred.password,
-        Ok(None) => {
-            return Err("Gerrit credentials not found. Please configure credentials in settings.".to_string());
-        }
-        Err(e) => {
-            log::error!("Failed to retrieve Gerrit credentials: {}", e);
-            return Err(format!("Failed to retrieve Gerrit credentials: {}", e));
-        }
-    };
-
-    let store = TaskStore::new().map_err(|e| e.to_string())?;
-    let task = store.load_task(uuid::Uuid::parse_str(&task_id).unwrap())
-        .map_err(|e| e.to_string())?;
-
-    let api_comments: Vec<crate::models::Comment> = task.items
-        .into_iter()
-        .filter_map(|item| {
-            if item.comments.is_empty() {
-                return None;
-            }
-            let task_comment = item.comments.into_iter().next()?;
-            Some(convert_task_comment_to_api_comment(task_comment, item.file))
-        })
-        .collect();
-
-    let mut gerrit_client = GerritClient::new(&gerrit_url);
-    gerrit_client = gerrit_client.with_auth(username, password);
-    let result = gerrit_client.submit_review(&change_id, &revision_id, api_comments, score)
-        .map_err(|e| e.to_string())?;
-
-    Ok(result)
+    // Gerrit client temporarily disabled
+    Err("Gerrit integration temporarily disabled".to_string())
 }
 
 #[tauri::command]
