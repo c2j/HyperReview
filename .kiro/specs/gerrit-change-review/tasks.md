@@ -16,18 +16,18 @@ This implementation plan breaks down the Gerrit Change Review System into manage
   - **Property 1: Schema Consistency**
   - **Validates: Requirements 1.3**
 
-- [ ] 2. Change Download Infrastructure
-  - [ ] 2.1 Implement ChangeDownloader service
+- [x] 2. Change Download Infrastructure
+  - [x] 2.1 Implement ChangeDownloader service
     - Create download manager with Gerrit API integration
     - Add file storage and caching mechanisms
     - Implement download progress tracking
     - _Requirements: 1.2, 1.3, 1.4_
 
-  - [ ]* 2.2 Write property test for download completeness
+  - [x] 2.2 Write property test for download completeness
     - **Property 1: Download Completeness**
     - **Validates: Requirements 1.2, 1.3**
 
-  - [ ] 2.3 Add download status and update functionality
+  - [x] 2.3 Add download status and update functionality
     - Implement download status checking
     - Add incremental update for existing changes
     - Handle download conflicts and retries

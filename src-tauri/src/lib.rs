@@ -41,6 +41,7 @@ pub mod search {
 pub mod services {
     pub mod encryption;
     pub mod credential_store;
+    pub mod change_downloader;
 }
 
 pub mod remote {
@@ -206,6 +207,14 @@ pub fn run() {
             commands::gerrit_commands::gerrit_create_comment_simple,
             commands::gerrit_commands::gerrit_get_comments_simple,
             commands::gerrit_commands::gerrit_submit_review_simple,
+
+            // Change download commands
+            commands::change_download_commands::gerrit_download_change,
+            commands::change_download_commands::gerrit_get_download_status,
+            commands::change_download_commands::gerrit_update_change,
+            commands::change_download_commands::gerrit_get_downloaded_files,
+            commands::change_download_commands::gerrit_is_change_downloaded,
+            commands::change_download_commands::gerrit_delete_downloaded_change,
 
             // Search and configuration commands
             commands::general::search,

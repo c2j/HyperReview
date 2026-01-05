@@ -1186,7 +1186,7 @@ impl Database {
                 progress_data TEXT NOT NULL DEFAULT '{}', -- JSON: {total_files, reviewed_files, files_with_comments, pending_files}
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (change_id) REFERENCES gerrit_changes(change_id) ON DELETE CASCADE
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(id) ON DELETE CASCADE
             );
 
             -- Downloaded Change Files for offline review
@@ -1202,7 +1202,7 @@ impl Database {
                 file_size INTEGER NOT NULL DEFAULT 0,
                 downloaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(change_id, patch_set_number, file_path),
-                FOREIGN KEY (change_id) REFERENCES gerrit_changes(change_id) ON DELETE CASCADE
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(id) ON DELETE CASCADE
             );
 
             -- File Reviews for tracking review progress per file
@@ -1844,6 +1844,19 @@ impl Database {
         Ok(files)
     }
 
+    /// Get all files for a change by Gerrit change ID and patch set
+    pub fn get_change_files_by_gerrit_id(&self, gerrit_change_id: &str, patch_set_number: u32) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
+        // First find the database record ID for this Gerrit change ID
+        let db_change_id = self.conn.query_row(
+            "SELECT id FROM gerrit_changes WHERE change_id = ?1",
+            params![gerrit_change_id],
+            |row| row.get::<_, String>(0)
+        ).map_err(HyperReviewError::Database)?;
+
+        // Now get the files using the database record ID
+        self.get_change_files(&db_change_id, patch_set_number)
+    }
+
     /// Check if change files are downloaded
     pub fn is_change_downloaded(&self, change_id: &str, patch_set_number: u32) -> Result<bool, HyperReviewError> {
         let mut stmt = self.conn.prepare(
@@ -1854,6 +1867,27 @@ impl Database {
             .map_err(HyperReviewError::Database)?;
 
         Ok(count > 0)
+    }
+
+    /// Check if change files are downloaded by Gerrit change ID
+    pub fn is_change_downloaded_by_gerrit_id(&self, gerrit_change_id: &str, patch_set_number: u32) -> Result<bool, HyperReviewError> {
+        // First find the database record ID for this Gerrit change ID
+        let db_change_id_result = self.conn.query_row(
+            "SELECT id FROM gerrit_changes WHERE change_id = ?1",
+            params![gerrit_change_id],
+            |row| row.get::<_, String>(0)
+        );
+
+        match db_change_id_result {
+            Ok(db_change_id) => {
+                // Now check if files are downloaded using the database record ID
+                self.is_change_downloaded(&db_change_id, patch_set_number)
+            }
+            Err(_) => {
+                // Change not found in database, so it's not downloaded
+                Ok(false)
+            }
+        }
     }
 
     // ============================================================================

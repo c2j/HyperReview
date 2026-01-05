@@ -8,6 +8,7 @@ pub mod gerrit_test;
 pub mod gerrit_simple;
 pub mod gerrit_commands;
 pub mod persistence_commands;
+pub mod change_download_commands;
 
 #[cfg(test)]
 pub mod test_create_task_core;
