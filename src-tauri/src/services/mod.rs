@@ -5,3 +5,4 @@ pub mod review_session;
 pub mod file_storage;
 pub mod diff_engine;
 pub mod file_tree;
+pub mod comment_engine;

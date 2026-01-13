@@ -2126,6 +2126,62 @@ impl Database {
         Ok(rows_affected > 0)
     }
 
+    /// Get a single review comment by ID
+    pub fn get_review_comment(&self, comment_id: &str) -> Result<Option<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
+             FROM review_comments WHERE id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let mut rows = stmt.query_map(params![comment_id], |row| {
+            Ok(crate::models::gerrit::ReviewComment {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                line_number: row.get(3)?,
+                content: row.get(4)?,
+                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
+                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
+                parent_comment_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(HyperReviewError::Database)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Update a review comment
+    pub fn update_review_comment(&self, comment: &crate::models::gerrit::ReviewComment) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "UPDATE review_comments 
+             SET content = ?1, comment_type = ?2, status = ?3, updated_at = ?4
+             WHERE id = ?5",
+            params![
+                comment.content,
+                comment.comment_type.to_string(),
+                comment.status.to_string(),
+                comment.updated_at,
+                comment.id
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get session comments (alias for compatibility)
+    pub fn get_session_comments(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        self.get_review_comments_for_session(session_id)
+    }
+
+    /// Get file comments (alias for compatibility)
+    pub fn get_file_comments(&self, session_id: &str, file_path: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        self.get_review_comments_for_file(session_id, file_path)
+    }
+
     // ============================================================================
     // Review Template Management Methods
     // ============================================================================

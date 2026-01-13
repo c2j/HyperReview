@@ -12,6 +12,7 @@ import {
   CreateInstanceParams, 
   CreateInstanceResult,
   ConnectionTestResult,
+  ConnectionStatus,
   ValidationError,
   ApiError,
   GerritErrorCode,
@@ -153,11 +154,11 @@ export class GerritInstanceServiceImpl implements GerritInstanceService {
       // Update instance status in cache
       const instance = this.instances.get(instanceId);
       if (instance) {
-        instance.connectionStatus = response.success ? 'Connected' : 'Disconnected';
+        instance.connectionStatus = response.success ? ConnectionStatus.CONNECTED : ConnectionStatus.DISCONNECTED;
         if (response.success) {
           instance.lastConnected = new Date().toISOString();
-          if (response.version) {
-            instance.version = response.version;
+          if (response.gerritVersion) {
+            instance.version = response.gerritVersion;
           }
         }
         this.instances.set(instanceId, instance);

@@ -749,7 +749,7 @@ pub struct ReviewComment {
     pub updated_at: String,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq, Eq, Hash)]
 pub enum CommentType {
     Inline,
     FileLevel,

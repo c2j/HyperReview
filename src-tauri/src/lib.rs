@@ -46,6 +46,7 @@ pub mod services {
     pub mod file_storage;
     pub mod diff_engine;
     pub mod file_tree;
+    pub mod comment_engine;
 }
 
 pub mod remote {
@@ -261,6 +262,27 @@ pub fn run() {
             commands::file_tree_commands::file_tree_get_default_config,
             commands::file_tree_commands::file_tree_update_config,
             commands::file_tree_commands::file_tree_create_search_criteria,
+
+            // Comment engine commands
+            commands::comment_engine_commands::comment_create,
+            commands::comment_engine_commands::comment_update,
+            commands::comment_engine_commands::comment_delete,
+            commands::comment_engine_commands::comment_get,
+            commands::comment_engine_commands::comment_get_session_comments,
+            commands::comment_engine_commands::comment_get_file_comments,
+            commands::comment_engine_commands::comment_get_thread,
+            commands::comment_engine_commands::comment_search,
+            commands::comment_engine_commands::comment_get_stats,
+            commands::comment_engine_commands::comment_publish_all_drafts,
+            commands::comment_engine_commands::comment_update_status,
+            commands::comment_engine_commands::comment_get_config,
+            commands::comment_engine_commands::comment_update_config,
+            commands::comment_engine_commands::comment_create_inline,
+            commands::comment_engine_commands::comment_get_line_comments,
+            commands::comment_engine_commands::comment_get_file_inline_comments,
+            commands::comment_engine_commands::comment_get_comments_by_line,
+            commands::comment_engine_commands::comment_update_inline_position,
+            commands::comment_engine_commands::comment_highlight_range,
 
             // Search and configuration commands
             commands::general::search,

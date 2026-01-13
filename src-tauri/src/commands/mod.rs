@@ -13,6 +13,7 @@ pub mod review_session_commands;
 pub mod file_storage_commands;
 pub mod diff_engine_commands;
 pub mod file_tree_commands;
+pub mod comment_engine_commands;
 
 #[cfg(test)]
 pub mod test_create_task_core;
