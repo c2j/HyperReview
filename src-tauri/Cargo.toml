@@ -1,8 +1,6 @@
 [package]
-name = "hyperreview"
-version = "0.1.0"
-description = "A Tauri App"
-authors = ["you"]
+name = "hyperreview_desktop"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -20,7 +18,7 @@ tauri-build = { version = "1.5.4", features = [] }
 
 [dependencies]
 # Tauri
-tauri = { version = "1.8", features = [  "dialog-open", "dialog-save", "fs-read-file", "fs-create-dir", "fs-remove-dir", "fs-rename-file", "fs-remove-file", "fs-read-dir", "fs-write-file", "fs-copy-file", "fs-exists", "shell-open"] }
+tauri = { version = "1.8", features = [ "dialog-ask", "dialog-message", "dialog-confirm",  "dialog-open", "dialog-save", "fs-read-file", "fs-create-dir", "fs-remove-dir", "fs-rename-file", "fs-remove-file", "fs-read-dir", "fs-write-file", "fs-copy-file", "fs-exists", "shell-open", "devtools"] }
 # tauri-plugin-opener = "1"
 # tauri-plugin-dialog = "1"
 
@@ -43,7 +41,19 @@ tree-sitter-sql = "0.0"
 rusqlite = { version = "0.32", features = ["bundled"] }
 
 # HTTP client
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "blocking"] }
+urlencoding = "2.1"
+
+# Encryption for credentials
+aes-gcm = "0.10"
+argon2 = "0.5"
+password-hash = "0.5"
+
+# File hashing
+sha2 = "0.10"
+
+# Temporary directories for testing
+tempfile = "3.8"
 
 # Concurrency
 rayon = "1.8"
@@ -76,6 +86,9 @@ lru = "0.12"
 
 # System info
 sys-info = "0.9"
+
+# Directory utilities
+dirs = "5.0"
 
 # Encryption
 base64 = "0.22"

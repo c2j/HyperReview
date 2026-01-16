@@ -23,21 +23,15 @@ pub enum HyperReviewError {
 
     /// Repository not found
     #[error("Repository not found: {path}")]
-    RepositoryNotFound {
-        path: String,
-    },
+    RepositoryNotFound { path: String },
 
     /// Invalid repository path
     #[error("Invalid repository path: {path}")]
-    InvalidPath {
-        path: String,
-    },
+    InvalidPath { path: String },
 
     /// Permission denied
     #[error("Permission denied: {operation}")]
-    PermissionDenied {
-        operation: String,
-    },
+    PermissionDenied { operation: String },
 
     /// Validation errors
     #[error("Validation error: {message}")]
@@ -53,33 +47,55 @@ pub enum HyperReviewError {
         status_code: Option<u16>,
     },
 
+    /// Reqwest HTTP errors
+    #[error("HTTP error: {0}")]
+    Http(#[from] reqwest::Error),
+
     /// Cache errors
     #[error("Cache error: {message}")]
-    Cache {
-        message: String,
-    },
+    Cache { message: String },
 
     /// Analysis errors
     #[error("Analysis error: {message}")]
-    Analysis {
-        message: String,
-    },
+    Analysis { message: String },
 
     /// Configuration errors
     #[error("Configuration error: {message}")]
-    Config {
-        message: String,
-    },
+    Config { message: String },
 
     /// Serialization/deserialization errors
     #[error("Serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 
+    /// Encryption errors
+    #[error("Encryption error: {0}")]
+    Encryption(String),
+
+    /// Decryption errors
+    #[error("Decryption error: {0}")]
+    Decryption(String),
+
+    /// Hashing errors
+    #[error("Hashing error: {0}")]
+    Hashing(String),
+
     /// Other errors
     #[error("Error: {message}")]
-    Other {
-        message: String,
-    },
+    Other { message: String },
+}
+
+impl From<&str> for HyperReviewError {
+    fn from(s: &str) -> Self {
+        Self::Other {
+            message: s.to_string(),
+        }
+    }
+}
+
+impl From<String> for HyperReviewError {
+    fn from(s: String) -> Self {
+        Self::Other { message: s }
+    }
 }
 
 impl HyperReviewError {
@@ -132,6 +148,21 @@ impl HyperReviewError {
     /// Create a configuration error
     pub fn config(message: String) -> Self {
         Self::Config { message }
+    }
+
+    /// Create an encryption error
+    pub fn encryption(message: String) -> Self {
+        Self::Encryption(message)
+    }
+
+    /// Create a decryption error
+    pub fn decryption(message: String) -> Self {
+        Self::Decryption(message)
+    }
+
+    /// Create a hashing error
+    pub fn hashing(message: String) -> Self {
+        Self::Hashing(message)
     }
 
     /// Create an other error

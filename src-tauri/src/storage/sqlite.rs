@@ -2,8 +2,12 @@
 // Local storage for review metadata
 
 use crate::models::{Repo, Comment, CommentStatus};
-use rusqlite::{Connection, Result};
+use crate::models::gerrit::{GerritInstance, GerritChange, ConnectionStatus, ChangeStatus, ImportStatus, ConflictStatus};
+use crate::errors::HyperReviewError;
+use rusqlite::{Connection, Result, params};
 use serde_json;
+use uuid::Uuid;
+use chrono::Utc;
 
 pub struct Database {
     conn: Connection,
@@ -121,7 +125,104 @@ impl Database {
                 created_at TEXT NOT NULL,
                 expires_at TEXT NOT NULL
             );
+
+            CREATE TABLE IF NOT EXISTS review_guides (
+                id TEXT PRIMARY KEY,
+                category TEXT NOT NULL,
+                title TEXT NOT NULL,
+                description TEXT NOT NULL,
+                severity TEXT NOT NULL,
+                reference_url TEXT,
+                applicable_extensions TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_review_guides_category ON review_guides(category);
+            CREATE INDEX IF NOT EXISTS idx_review_guides_severity ON review_guides(severity);
+
+            -- Local Tasks table
+            CREATE TABLE IF NOT EXISTS local_tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                description TEXT,
+                status TEXT NOT NULL,
+                priority INTEGER DEFAULT 1,
+                assignee TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                due_date TEXT,
+                task_type TEXT,
+                metadata TEXT
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_local_tasks_status ON local_tasks(status);
+            CREATE INDEX IF NOT EXISTS idx_local_tasks_type ON local_tasks(task_type);
+
+            -- Local Task Files table
+            CREATE TABLE IF NOT EXISTS local_task_files (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                path TEXT NOT NULL,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                review_status TEXT,
+                review_comment TEXT,
+                created_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES local_tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_local_task_files_task_id ON local_task_files(task_id);
+
+            -- File Review Comments table - stores all review comments for each file
+            CREATE TABLE IF NOT EXISTS file_review_comments (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                file_id TEXT NOT NULL,
+                review_status TEXT NOT NULL,
+                review_comment TEXT NOT NULL,
+                submitted_by TEXT,
+                submitted_at TEXT NOT NULL,
+                FOREIGN KEY (task_id) REFERENCES local_tasks(id) ON DELETE CASCADE
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_file_review_comments_task_id ON file_review_comments(task_id);
+            CREATE INDEX IF NOT EXISTS idx_file_review_comments_file_id ON file_review_comments(file_id);
         ")?;
+
+        // Migration: Add missing columns to existing tables
+        // For local_task_files table, add review_status and review_comment if they don't exist
+        // Use a simpler check that queries the count directly
+        let check_column = |col_name: &str| -> rusqlite::Result<bool> {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('local_task_files') WHERE name='{}'",
+                col_name
+            ))?;
+            let count: i64 = stmt.query_row([], |row| row.get(0))?;
+            Ok(count > 0)
+        };
+
+        if !check_column("review_status")? {
+            log::info!("Adding review_status column to local_task_files table");
+            self.conn.execute(
+                "ALTER TABLE local_task_files ADD COLUMN review_status TEXT",
+                []
+            )?;
+        }
+
+        if !check_column("review_comment")? {
+            log::info!("Adding review_comment column to local_task_files table");
+            self.conn.execute(
+                "ALTER TABLE local_task_files ADD COLUMN review_comment TEXT",
+                []
+            )?;
+        }
+
+        // Create the index after ensuring the column exists
+        self.conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_local_task_files_review_status ON local_task_files(review_status)",
+            []
+        )?;
 
         Ok(())
     }
@@ -383,6 +484,8 @@ impl Database {
                 updated_at: row.get("updated_at")?,
                 due_date: row.get("due_date")?,
                 metadata,
+                task_type: None,
+                files: vec![],
             })
         })?;
 
@@ -565,4 +668,1522 @@ impl Database {
         )?;
         Ok(())
     }
+
+    // ===== Review Guide Operations =====
+
+    /// Store a review guide
+    pub fn store_review_guide(&self, guide: &crate::models::ReviewGuideItem) -> Result<(), rusqlite::Error> {
+        log::info!("Storing review guide: {}", guide.id);
+
+        let extensions_json = serde_json::to_string(&guide.applicable_extensions).unwrap_or_else(|_| "[]".to_string());
+        let category_str = format!("{:?}", guide.category);
+        let severity_str = format!("{:?}", guide.severity);
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO review_guides (id, category, title, description, severity, reference_url, applicable_extensions, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            (
+                &guide.id,
+                &category_str,
+                &guide.title,
+                &guide.description,
+                &severity_str,
+                guide.reference_url.as_deref(),
+                &extensions_json,
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+                chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            ),
+        )?;
+
+        Ok(())
+    }
+
+    /// Get all review guides
+    pub fn get_review_guides(&self) -> Result<Vec<crate::models::ReviewGuideItem>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, category, title, description, severity, reference_url, applicable_extensions
+             FROM review_guides
+             ORDER BY category ASC, severity DESC, title ASC"
+        )?;
+
+        let guide_iter = stmt.query_map([], |row| {
+            let extensions_str: String = row.get("applicable_extensions")?;
+            let applicable_extensions: Vec<String> = serde_json::from_str(&extensions_str).unwrap_or_default();
+
+            Ok(crate::models::ReviewGuideItem {
+                id: row.get("id")?,
+                // 直接使用字符串类别，支持中文
+                category: row.get::<_, String>("category")?,
+                title: row.get("title")?,
+                description: row.get("description")?,
+                severity: match row.get::<_, String>("severity")?.as_str() {
+                    "High" => crate::models::ReviewGuideSeverity::High,
+                    "Medium" => crate::models::ReviewGuideSeverity::Medium,
+                    "Low" => crate::models::ReviewGuideSeverity::Low,
+                    _ => crate::models::ReviewGuideSeverity::Low,
+                },
+                reference_url: row.get("reference_url")?,
+                applicable_extensions,
+            })
+        })?;
+
+        let mut guides = Vec::new();
+        for guide_result in guide_iter {
+            guides.push(guide_result?);
+        }
+
+        Ok(guides)
+    }
+
+    /// Delete a review guide
+    pub fn delete_review_guide(&self, guide_id: &str) -> Result<(), rusqlite::Error> {
+        log::info!("Deleting review guide: {}", guide_id);
+        self.conn.execute("DELETE FROM review_guides WHERE id = ?1", [guide_id])?;
+        Ok(())
+    }
+
+    // ===== Local Task Operations =====
+
+    /// Create a new local task
+    pub fn create_local_task(
+        &self,
+        title: &str,
+        task_type: &str,
+        file_paths: &[String],
+    ) -> Result<crate::models::Task, rusqlite::Error> {
+        log::info!("Creating local task: {} with {} files", title, file_paths.len());
+
+        let task_id = uuid::Uuid::new_v4().to_string();
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        // Insert task
+        self.conn.execute(
+            "INSERT INTO local_tasks (id, title, status, priority, created_at, updated_at, task_type)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                &task_id,
+                title,
+                "active",
+                1i32,
+                &timestamp,
+                &timestamp,
+                task_type,
+            ),
+        )?;
+
+        // Insert files
+        for file_path in file_paths {
+            let file_id = uuid::Uuid::new_v4().to_string();
+            let file_name = std::path::Path::new(file_path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("Unknown");
+
+            self.conn.execute(
+                "INSERT INTO local_task_files (id, task_id, path, name, status, review_status, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                (
+                    &file_id,
+                    &task_id,
+                    file_path,
+                    file_name,
+                    "modified",
+                    "pending",  // Default review status
+                    &timestamp,
+                ),
+            )?;
+        }
+
+        // Return the created task with files
+        Ok(crate::models::Task {
+            id: task_id.clone(),
+            title: title.to_string(),
+            description: None,
+            status: crate::models::TaskStatus::Active,
+            priority: 1,
+            assignee: None,
+            created_at: timestamp.clone(),
+            updated_at: timestamp,
+            due_date: None,
+            metadata: std::collections::HashMap::new(),
+            task_type: match task_type {
+                "code" => Some(crate::models::TaskType::Code),
+                "sql" => Some(crate::models::TaskType::Sql),
+                "security" => Some(crate::models::TaskType::Security),
+                _ => None,
+            },
+            files: file_paths
+                .iter()
+                .enumerate()
+                .map(|(i, path)| {
+                    let name = std::path::Path::new(path)
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("Unknown")
+                        .to_string();
+                    crate::models::TaskFile {
+                        id: format!("{}-{}", task_id, i),
+                        path: path.clone(),
+                        name,
+                        status: crate::models::FileStatus::Modified,
+                        review_status: Some(crate::models::FileReviewStatus::Pending),
+                        review_comment: None,
+                    }
+                })
+                .collect(),
+        })
+    }
+
+    /// Get all local tasks
+    pub fn get_local_tasks(&self) -> Result<Vec<crate::models::Task>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, title, status, task_type FROM local_tasks
+             ORDER BY created_at DESC"
+        )?;
+
+        let task_iter = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, String>("id")?,
+                row.get::<_, String>("title")?,
+                row.get::<_, String>("status")?,
+                row.get::<_, Option<String>>("task_type")?,
+            ))
+        })?;
+
+        let mut tasks = Vec::new();
+        for task_result in task_iter {
+            let (task_id, title, status, task_type) = task_result?;
+
+            // Get files for this task
+            let mut file_stmt = self.conn.prepare(
+                "SELECT id, path, name, status, review_status, review_comment FROM local_task_files WHERE task_id = ?1"
+            )?;
+
+            let files: Vec<crate::models::TaskFile> = file_stmt
+                .query_map([&task_id], |row| {
+                    let review_status_str: Option<String> = row.get("review_status")?;
+                    Ok(crate::models::TaskFile {
+                        id: row.get("id")?,
+                        path: row.get("path")?,
+                        name: row.get("name")?,
+                        status: match row.get::<_, String>("status")?.as_str() {
+                            "modified" => crate::models::FileStatus::Modified,
+                            "added" => crate::models::FileStatus::Added,
+                            "deleted" => crate::models::FileStatus::Deleted,
+                            _ => crate::models::FileStatus::Modified,
+                        },
+                        review_status: review_status_str.and_then(|s| match s.as_str() {
+                            "pending" => Some(crate::models::FileReviewStatus::Pending),
+                            "approved" => Some(crate::models::FileReviewStatus::Approved),
+                            "concern" => Some(crate::models::FileReviewStatus::Concern),
+                            "must_change" => Some(crate::models::FileReviewStatus::MustChange),
+                            "question" => Some(crate::models::FileReviewStatus::Question),
+                            _ => Some(crate::models::FileReviewStatus::Pending),
+                        }),
+                        review_comment: row.get("review_comment")?,
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+
+            tasks.push(crate::models::Task {
+                id: task_id.clone(),
+                title,
+                description: None,
+                status: match status.as_str() {
+                    "active" => crate::models::TaskStatus::Active,
+                    "pending" => crate::models::TaskStatus::Pending,
+                    "completed" => crate::models::TaskStatus::Completed,
+                    "blocked" => crate::models::TaskStatus::Blocked,
+                    _ => crate::models::TaskStatus::Pending,
+                },
+                priority: 1,
+                assignee: None,
+                created_at: String::new(),
+                updated_at: String::new(),
+                due_date: None,
+                metadata: std::collections::HashMap::new(),
+                task_type: match task_type.as_deref() {
+                    Some("code") => Some(crate::models::TaskType::Code),
+                    Some("sql") => Some(crate::models::TaskType::Sql),
+                    Some("security") => Some(crate::models::TaskType::Security),
+                    _ => None,
+                },
+                files,
+            });
+        }
+
+        Ok(tasks)
+    }
+
+    /// Delete a local task
+    pub fn delete_local_task(&self, task_id: &str) -> Result<(), rusqlite::Error> {
+        log::info!("Deleting local task: {}", task_id);
+        self.conn.execute("DELETE FROM local_tasks WHERE id = ?1", [task_id])?;
+        // Files will be deleted automatically due to FOREIGN KEY
+        Ok(())
+    }
+
+    /// Update file review status
+    pub fn update_file_review_status(
+        &self,
+        task_id: &str,
+        file_id: &str,
+        review_status: &str,
+        review_comment: Option<&str>,
+        submitted_by: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        log::info!("Updating review status for file {} in task {} to {}", file_id, task_id, review_status);
+
+        // Update the current status in local_task_files
+        self.conn.execute(
+            "UPDATE local_task_files
+             SET review_status = ?1, review_comment = ?2
+             WHERE id = ?3 AND task_id = ?4",
+            (review_status, review_comment.unwrap_or(""), file_id, task_id),
+        )?;
+
+        // Also insert into comment history
+        let comment_id = uuid::Uuid::new_v4().to_string();
+        let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        self.conn.execute(
+            "INSERT INTO file_review_comments (id, task_id, file_id, review_status, review_comment, submitted_by, submitted_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            (
+                &comment_id,
+                task_id,
+                file_id,
+                review_status,
+                review_comment.unwrap_or(""),
+                submitted_by.unwrap_or("Anonymous"),
+                &timestamp,
+            ),
+        )?;
+
+        Ok(())
+    }
+
+    /// Get all review comments for a file
+    pub fn get_file_review_comments(
+        &self,
+        task_id: &str,
+        file_id: &str,
+    ) -> Result<Vec<crate::models::FileReviewComment>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, task_id, file_id, review_status, review_comment, submitted_by, submitted_at
+             FROM file_review_comments
+             WHERE task_id = ?1 AND file_id = ?2
+             ORDER BY submitted_at ASC"
+        )?;
+
+        let comment_iter = stmt.query_map([task_id, file_id], |row| {
+            Ok(crate::models::FileReviewComment {
+                id: row.get("id")?,
+                task_id: row.get("task_id")?,
+                file_id: row.get("file_id")?,
+                review_status: row.get("review_status")?,
+                review_comment: row.get("review_comment")?,
+                submitted_by: row.get("submitted_by")?,
+                submitted_at: row.get("submitted_at")?,
+            })
+        })?;
+
+        let mut comments = Vec::new();
+        for comment_result in comment_iter {
+            comments.push(comment_result?);
+        }
+
+        Ok(comments)
+    }
+
+    /// Mark task as completed
+    pub fn mark_task_completed(&self, task_id: &str) -> Result<(), rusqlite::Error> {
+        log::info!("Marking task {} as completed", task_id);
+        self.conn.execute(
+            "UPDATE local_tasks SET status = 'completed' WHERE id = ?1",
+            [task_id],
+        )?;
+        Ok(())
+    }
+
+    /// Export task review data as CSV
+    /// Returns CSV string with task info, file review status, and all review comments
+    pub fn export_task_review_csv(&self, task_id: &str) -> Result<String, rusqlite::Error> {
+        log::info!("Exporting task review data as CSV: {}", task_id);
+
+        // Get task info
+        let mut stmt = self.conn.prepare(
+            "SELECT title, status, task_type, created_at FROM local_tasks WHERE id = ?1"
+        )?;
+        let task_result = stmt.query_row([&task_id], |row| {
+            Ok((
+                row.get::<_, String>("title")?,
+                row.get::<_, String>("status")?,
+                row.get::<_, Option<String>>("task_type")?,
+                row.get::<_, String>("created_at")?,
+            ))
+        });
+
+        let (task_title, task_status, task_type, task_created) = match task_result {
+            Ok(t) => t,
+            Err(_) => return Err(rusqlite::Error::QueryReturnedNoRows),
+        };
+
+        // Build CSV header
+        let mut csv = String::from("\u{FEFF}"); // UTF-8 BOM for Excel compatibility
+        csv.push_str("Task ID,Task Title,Task Type,Task Status,Created At,File ID,File Path,File Name,File Status,Review Status,Review Comment,Comment ID,Comment Status,Comment Author,Comment Date\n");
+
+        // Get files for this task
+        let mut file_stmt = self.conn.prepare(
+            "SELECT id, path, name, status, review_status, review_comment FROM local_task_files WHERE task_id = ?1"
+        )?;
+
+        let file_iter = file_stmt.query_map([&task_id], |row| {
+            Ok((
+                row.get::<_, String>("id")?,
+                row.get::<_, String>("path")?,
+                row.get::<_, String>("name")?,
+                row.get::<_, String>("status")?,
+                row.get::<_, Option<String>>("review_status")?,
+                row.get::<_, Option<String>>("review_comment")?,
+            ))
+        })?;
+
+        // CSV writer helper - escapes fields with commas or quotes
+        let escape_csv = |s: &str| -> String {
+            if s.contains(',') || s.contains('"') || s.contains('\n') {
+                format!("\"{}\"", s.replace("\"", "\"\""))
+            } else {
+                s.to_string()
+            }
+        };
+
+        for file_result in file_iter {
+            let (file_id, file_path, file_name, file_status, review_status, review_comment) = file_result?;
+
+            // Row with current review status
+            let row = format!(
+                "{},{},{},{},{},{},{},{},{},{},{},,,,,\n",
+                escape_csv(&task_id),
+                escape_csv(&task_title),
+                escape_csv(&task_type.as_deref().unwrap_or("")),
+                escape_csv(&task_status),
+                escape_csv(&task_created),
+                escape_csv(&file_id),
+                escape_csv(&file_path),
+                escape_csv(&file_name),
+                escape_csv(&file_status),
+                escape_csv(&review_status.as_deref().unwrap_or("pending")),
+                escape_csv(&review_comment.as_deref().unwrap_or("")),
+            );
+            csv.push_str(&row);
+
+            // Get all historical review comments for this file
+            let mut comment_stmt = self.conn.prepare(
+                "SELECT id, review_status, review_comment, submitted_by, submitted_at
+                 FROM file_review_comments
+                 WHERE task_id = ?1 AND file_id = ?2
+                 ORDER BY submitted_at ASC"
+            )?;
+
+            let comment_iter = comment_stmt.query_map([&task_id, file_id.as_str()], |row| {
+                Ok((
+                    row.get::<_, String>("id")?,
+                    row.get::<_, String>("review_status")?,
+                    row.get::<_, String>("review_comment")?,
+                    row.get::<_, String>("submitted_by")?,
+                    row.get::<_, String>("submitted_at")?,
+                ))
+            })?;
+
+            for comment_result in comment_iter {
+                let (comment_id, comment_status, comment_text, comment_author, comment_date) = comment_result?;
+                let comment_row = format!(
+                    "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},\n",
+                    escape_csv(&task_id),
+                    escape_csv(&task_title),
+                    escape_csv(&task_type.as_deref().unwrap_or("")),
+                    escape_csv(&task_status),
+                    escape_csv(&task_created),
+                    escape_csv(&file_id),
+                    escape_csv(&file_path),
+                    escape_csv(&file_name),
+                    escape_csv(&file_status),
+                    "", // current review status - empty for comment rows
+                    "", // current review comment - empty for comment rows
+                    escape_csv(&comment_id),
+                    escape_csv(&comment_status),
+                    escape_csv(&comment_author),
+                    escape_csv(&comment_date),
+                );
+                csv.push_str(&comment_row);
+            }
+        }
+
+        Ok(csv)
+    }
+
+    // ============================================================================
+    // Gerrit Integration Methods
+    // ============================================================================
+
+    /// Create Gerrit tables if they don't exist
+    pub fn init_gerrit_schema(&self) -> Result<(), HyperReviewError> {
+        self.conn.execute_batch("
+            CREATE TABLE IF NOT EXISTS gerrit_instances (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                url TEXT NOT NULL UNIQUE,
+                username TEXT NOT NULL,
+                password_encrypted TEXT NOT NULL,
+                version TEXT DEFAULT '',
+                last_connected TEXT,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                connection_status TEXT NOT NULL DEFAULT 'disconnected',
+                polling_interval INTEGER NOT NULL DEFAULT 300,
+                max_changes INTEGER NOT NULL DEFAULT 100,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE TABLE IF NOT EXISTS gerrit_changes (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                instance_id TEXT NOT NULL,
+                project TEXT NOT NULL,
+                branch TEXT NOT NULL,
+                subject TEXT NOT NULL,
+                status TEXT NOT NULL,
+                owner_name TEXT NOT NULL,
+                owner_email TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                insertions INTEGER NOT NULL DEFAULT 0,
+                deletions INTEGER NOT NULL DEFAULT 0,
+                current_revision TEXT NOT NULL,
+                current_patch_set_num INTEGER NOT NULL,
+                total_files INTEGER NOT NULL DEFAULT 0,
+                reviewed_files INTEGER NOT NULL DEFAULT 0,
+                local_comments INTEGER NOT NULL DEFAULT 0,
+                remote_comments INTEGER NOT NULL DEFAULT 0,
+                import_status TEXT NOT NULL DEFAULT 'pending',
+                last_sync_at TEXT,
+                conflict_status TEXT NOT NULL DEFAULT 'none',
+                metadata TEXT NOT NULL DEFAULT '{}',
+                
+                FOREIGN KEY (instance_id) REFERENCES gerrit_instances(id) ON DELETE CASCADE,
+                UNIQUE(instance_id, change_id)
+            );
+
+            -- Review Sessions table for managing review workflows
+            CREATE TABLE IF NOT EXISTS review_sessions (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                patch_set_number INTEGER NOT NULL,
+                reviewer_id TEXT NOT NULL,
+                mode TEXT NOT NULL, -- 'online', 'offline', 'hybrid'
+                status TEXT NOT NULL, -- 'in_progress', 'ready_for_submission', 'submitted', 'abandoned'
+                progress_data TEXT NOT NULL DEFAULT '{}', -- JSON: {total_files, reviewed_files, files_with_comments, pending_files}
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(id) ON DELETE CASCADE
+            );
+
+            -- Downloaded Change Files for offline review
+            CREATE TABLE IF NOT EXISTS change_files (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                patch_set_number INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                change_type TEXT NOT NULL, -- 'added', 'modified', 'deleted', 'renamed', 'copied'
+                old_content TEXT,
+                new_content TEXT,
+                diff_data TEXT NOT NULL, -- JSON: unified diff and metadata
+                file_size INTEGER NOT NULL DEFAULT 0,
+                downloaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(change_id, patch_set_number, file_path),
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(id) ON DELETE CASCADE
+            );
+
+            -- File Reviews for tracking review progress per file
+            CREATE TABLE IF NOT EXISTS file_reviews (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                review_status TEXT NOT NULL, -- 'pending', 'in_progress', 'reviewed', 'has_comments', 'approved', 'needs_work'
+                last_reviewed TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES review_sessions(id) ON DELETE CASCADE
+            );
+
+            -- Review Comments for inline and file-level comments
+            CREATE TABLE IF NOT EXISTS review_comments (
+                id TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                line_number INTEGER, -- NULL for file-level comments
+                content TEXT NOT NULL,
+                comment_type TEXT NOT NULL, -- 'inline', 'file_level', 'general', 'suggestion', 'question', 'issue'
+                status TEXT NOT NULL, -- 'draft', 'published', 'resolved', 'acknowledged'
+                parent_comment_id TEXT, -- For threaded comments
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (session_id) REFERENCES review_sessions(id) ON DELETE CASCADE,
+                FOREIGN KEY (parent_comment_id) REFERENCES review_comments(id) ON DELETE CASCADE
+            );
+
+            -- Review Templates for reusable review patterns
+            CREATE TABLE IF NOT EXISTS review_templates (
+                id TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                description TEXT,
+                file_patterns TEXT NOT NULL, -- JSON array of file patterns
+                template_content TEXT NOT NULL,
+                category TEXT,
+                usage_count INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_instance ON gerrit_changes(instance_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_status ON gerrit_changes(status);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_import_status ON gerrit_changes(import_status);
+            CREATE INDEX IF NOT EXISTS idx_review_sessions_change ON review_sessions(change_id);
+            CREATE INDEX IF NOT EXISTS idx_review_sessions_status ON review_sessions(status);
+            CREATE INDEX IF NOT EXISTS idx_change_files_change ON change_files(change_id, patch_set_number);
+            CREATE INDEX IF NOT EXISTS idx_file_reviews_session ON file_reviews(session_id);
+            CREATE INDEX IF NOT EXISTS idx_review_comments_session ON review_comments(session_id);
+            CREATE INDEX IF NOT EXISTS idx_review_comments_file ON review_comments(file_path);
+            CREATE INDEX IF NOT EXISTS idx_review_templates_category ON review_templates(category);
+        ").map_err(HyperReviewError::Database)?;
+
+        // Migration: Add missing columns to existing tables if they don't exist
+        // Check if username column exists in gerrit_instances table
+        let check_column = |table_name: &str, col_name: &str| -> rusqlite::Result<bool> {
+            let mut stmt = self.conn.prepare(&format!(
+                "SELECT COUNT(*) FROM pragma_table_info('{}') WHERE name='{}'",
+                table_name, col_name
+            ))?;
+            let count: i64 = stmt.query_row([], |row| row.get(0))?;
+            Ok(count > 0)
+        };
+
+        // Check if gerrit_instances table exists and has the username column
+        let table_exists = self.conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_instances'")
+            .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
+            .is_ok();
+
+        if table_exists {
+            // Add missing columns if they don't exist
+            if !check_column("gerrit_instances", "username").unwrap_or(false) {
+                log::info!("Adding username column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN username TEXT DEFAULT 'admin'",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "password_encrypted").unwrap_or(false) {
+                log::info!("Adding password_encrypted column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN password_encrypted TEXT DEFAULT ''",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "version").unwrap_or(false) {
+                log::info!("Adding version column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN version TEXT DEFAULT ''",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "last_connected").unwrap_or(false) {
+                log::info!("Adding last_connected column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN last_connected TEXT",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "connection_status").unwrap_or(false) {
+                log::info!("Adding connection_status column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN connection_status TEXT DEFAULT 'disconnected'",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "polling_interval").unwrap_or(false) {
+                log::info!("Adding polling_interval column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN polling_interval INTEGER DEFAULT 300",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "max_changes").unwrap_or(false) {
+                log::info!("Adding max_changes column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN max_changes INTEGER DEFAULT 100",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "created_at").unwrap_or(false) {
+                log::info!("Adding created_at column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_instances", "updated_at").unwrap_or(false) {
+                log::info!("Adding updated_at column to gerrit_instances table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_instances ADD COLUMN updated_at TEXT DEFAULT CURRENT_TIMESTAMP",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+        }
+
+        // Similar migration for gerrit_changes table
+        let changes_table_exists = self.conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_changes'")
+            .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
+            .is_ok();
+
+        if changes_table_exists {
+            if !check_column("gerrit_changes", "insertions").unwrap_or(false) {
+                log::info!("Adding insertions column to gerrit_changes table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_changes ADD COLUMN insertions INTEGER DEFAULT 0",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+
+            if !check_column("gerrit_changes", "deletions").unwrap_or(false) {
+                log::info!("Adding deletions column to gerrit_changes table");
+                self.conn.execute(
+                    "ALTER TABLE gerrit_changes ADD COLUMN deletions INTEGER DEFAULT 0",
+                    []
+                ).map_err(HyperReviewError::Database)?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Store a Gerrit instance
+    pub fn store_gerrit_instance(&self, instance: &GerritInstance) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO gerrit_instances 
+             (id, name, url, username, password_encrypted, version, last_connected, 
+              is_active, connection_status, polling_interval, max_changes, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                instance.id,
+                instance.name,
+                instance.url,
+                instance.username,
+                instance.password_encrypted,
+                instance.version,
+                instance.last_connected,
+                instance.is_active,
+                instance.connection_status.to_string(),
+                instance.polling_interval,
+                instance.max_changes,
+                instance.created_at,
+                instance.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get a Gerrit instance by ID
+    pub fn get_gerrit_instance(&self, instance_id: &str) -> Result<Option<GerritInstance>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, url, username, password_encrypted, version, last_connected,
+                    is_active, connection_status, polling_interval, max_changes, created_at, updated_at
+             FROM gerrit_instances WHERE id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let result = stmt.query_row(params![instance_id], |row| {
+            Ok(GerritInstance {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                url: row.get(2)?,
+                username: row.get(3)?,
+                password_encrypted: row.get(4)?,
+                version: row.get(5)?,
+                is_active: row.get::<_, i32>(7)? != 0,
+                last_connected: row.get(6)?,
+                connection_status: ConnectionStatus::from_string(&row.get::<_, String>(8)?),
+                polling_interval: row.get(9)?,
+                max_changes: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        });
+
+        match result {
+            Ok(instance) => Ok(Some(instance)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database(e)),
+        }
+    }
+
+    /// Get all Gerrit instances
+    pub fn get_all_gerrit_instances(&self) -> Result<Vec<GerritInstance>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, name, url, username, password_encrypted, version, last_connected,
+                    is_active, connection_status, polling_interval, max_changes, created_at, updated_at
+             FROM gerrit_instances ORDER BY name"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map([], |row| {
+            Ok(GerritInstance {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                url: row.get(2)?,
+                username: row.get(3)?,
+                password_encrypted: row.get(4)?,
+                version: row.get(5)?,
+                is_active: row.get::<_, i32>(7)? != 0,
+                last_connected: row.get(6)?,
+                connection_status: ConnectionStatus::from_string(&row.get::<_, String>(8)?),
+                polling_interval: row.get(9)?,
+                max_changes: row.get(10)?,
+                created_at: row.get(11)?,
+                updated_at: row.get(12)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut instances = Vec::new();
+        for row in rows {
+            instances.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(instances)
+    }
+
+    /// Delete a Gerrit instance
+    pub fn delete_gerrit_instance(&self, instance_id: &str) -> Result<bool, HyperReviewError> {
+        let rows_affected = self.conn.execute(
+            "DELETE FROM gerrit_instances WHERE id = ?1",
+            params![instance_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(rows_affected > 0)
+    }
+
+    /// Store a Gerrit change
+    pub fn store_gerrit_change(&self, change: &GerritChange) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO gerrit_changes 
+             (id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
+              created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
+              total_files, reviewed_files, local_comments, remote_comments, import_status, last_sync_at, 
+              conflict_status, metadata)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20, ?21, ?22, ?23)",
+            params![
+                change.id,
+                change.change_id,
+                change.instance_id,
+                change.project,
+                change.branch,
+                change.subject,
+                change.status.to_string(),
+                change.owner.name,
+                change.owner.email,
+                change.created,
+                change.updated,
+                change.insertions,
+                change.deletions,
+                change.current_revision,
+                change.current_patch_set_num,
+                change.total_files,
+                change.reviewed_files,
+                change.local_comments,
+                change.remote_comments,
+                change.import_status.to_string(),
+                change.last_sync,
+                change.conflict_status.to_string(),
+                serde_json::to_string(&change.metadata).unwrap_or_default()
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get a Gerrit change by ID
+    pub fn get_gerrit_change(&self, change_id: &str) -> Result<Option<GerritChange>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
+                    created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
+                    total_files, reviewed_files, local_comments, remote_comments, import_status, last_sync_at,
+                    conflict_status, metadata
+             FROM gerrit_changes WHERE id = ?1 OR change_id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let result = stmt.query_row(params![change_id], |row| {
+            let metadata_str: String = row.get(22)?;
+            let metadata = serde_json::from_str(&metadata_str).unwrap_or_default();
+
+            Ok(GerritChange {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                instance_id: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                subject: row.get(5)?,
+                status: ChangeStatus::from_string(&row.get::<_, String>(6)?),
+                owner: crate::models::gerrit::GerritUser {
+                    account_id: 0, // TODO: Add account_id to schema
+                    name: row.get(7)?,
+                    email: row.get(8)?,
+                    username: None,
+                    avatar_url: None,
+                },
+                created: row.get(9)?,
+                updated: row.get(10)?,
+                insertions: row.get(11)?,
+                deletions: row.get(12)?,
+                current_revision: row.get(13)?,
+                current_patch_set_num: row.get(14)?,
+                patch_sets: Vec::new(), // TODO: Load from patch_sets table
+                files: Vec::new(),      // TODO: Load from gerrit_files table
+                total_files: row.get(15)?,
+                reviewed_files: row.get(16)?,
+                local_comments: row.get(17)?,
+                remote_comments: row.get(18)?,
+                import_status: ImportStatus::from_string(&row.get::<_, String>(19)?),
+                last_sync: row.get(20)?,
+                conflict_status: ConflictStatus::from_string(&row.get::<_, String>(21)?),
+                metadata,
+            })
+        });
+
+        match result {
+            Ok(change) => Ok(Some(change)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database(e)),
+        }
+    }
+
+    /// Update a Gerrit change
+    pub fn update_gerrit_change(&self, change: &GerritChange) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "UPDATE gerrit_changes SET 
+             subject = ?2, status = ?3, updated_at = ?4, insertions = ?5, deletions = ?6,
+             current_revision = ?7, current_patch_set_num = ?8, total_files = ?9, reviewed_files = ?10,
+             local_comments = ?11, remote_comments = ?12, import_status = ?13,
+             last_sync_at = ?14, conflict_status = ?15, metadata = ?16
+             WHERE id = ?1",
+            params![
+                change.id,
+                change.subject,
+                change.status.to_string(),
+                change.updated,
+                change.insertions,
+                change.deletions,
+                change.current_revision,
+                change.current_patch_set_num,
+                change.total_files,
+                change.reviewed_files,
+                change.local_comments,
+                change.remote_comments,
+                change.import_status.to_string(),
+                change.last_sync,
+                change.conflict_status.to_string(),
+                serde_json::to_string(&change.metadata).unwrap_or_default()
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all Gerrit changes for an instance
+    pub fn get_gerrit_changes_for_instance(&self, instance_id: &str) -> Result<Vec<GerritChange>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
+                    created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
+                    total_files, reviewed_files, local_comments, remote_comments, import_status, last_sync_at,
+                    conflict_status, metadata
+             FROM gerrit_changes WHERE instance_id = ?1 ORDER BY updated_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![instance_id], |row| {
+            let metadata_str: String = row.get(22)?;
+            let metadata = serde_json::from_str(&metadata_str).unwrap_or_default();
+
+            Ok(GerritChange {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                instance_id: row.get(2)?,
+                project: row.get(3)?,
+                branch: row.get(4)?,
+                subject: row.get(5)?,
+                status: ChangeStatus::from_string(&row.get::<_, String>(6)?),
+                owner: crate::models::gerrit::GerritUser {
+                    account_id: 0,
+                    name: row.get(7)?,
+                    email: row.get(8)?,
+                    username: None,
+                    avatar_url: None,
+                },
+                created: row.get(9)?,
+                updated: row.get(10)?,
+                insertions: row.get(11)?,
+                deletions: row.get(12)?,
+                current_revision: row.get(13)?,
+                current_patch_set_num: row.get(14)?,
+                patch_sets: Vec::new(),
+                files: Vec::new(),
+                total_files: row.get(15)?,
+                reviewed_files: row.get(16)?,
+                local_comments: row.get(17)?,
+                remote_comments: row.get(18)?,
+                import_status: ImportStatus::from_string(&row.get::<_, String>(19)?),
+                last_sync: row.get(20)?,
+                conflict_status: ConflictStatus::from_string(&row.get::<_, String>(21)?),
+                metadata,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut changes = Vec::new();
+        for row in rows {
+            changes.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(changes)
+    }
+
+    /// Delete a Gerrit change
+    pub fn delete_gerrit_change(&self, change_id: &str) -> Result<bool, HyperReviewError> {
+        let rows_affected = self.conn.execute(
+            "DELETE FROM gerrit_changes WHERE id = ?1 OR change_id = ?1",
+            params![change_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(rows_affected > 0)
+    }
+
+    /// Clear all Gerrit data (for debugging/testing purposes)
+    pub fn clear_all_gerrit_data(&self) -> Result<usize, HyperReviewError> {
+        let rows_affected = self.conn.execute("DELETE FROM gerrit_instances", [])
+            .map_err(HyperReviewError::Database)?;
+        Ok(rows_affected)
+    }
+
+    // ============================================================================
+    // Review Session Management Methods
+    // ============================================================================
+
+    /// Create a new review session
+    pub fn create_review_session(&self, session: &crate::models::gerrit::ReviewSession) -> Result<(), HyperReviewError> {
+        let progress_json = serde_json::to_string(&session.progress).unwrap_or_default();
+        
+        self.conn.execute(
+            "INSERT INTO review_sessions 
+             (id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                session.id,
+                session.change_id,
+                session.patch_set_number,
+                session.reviewer_id,
+                session.mode.to_string(),
+                session.status.to_string(),
+                progress_json,
+                session.created_at,
+                session.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get a review session by ID
+    pub fn get_review_session(&self, session_id: &str) -> Result<Option<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let result = stmt.query_row(params![session_id], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        });
+
+        match result {
+            Ok(session) => Ok(Some(session)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database(e)),
+        }
+    }
+
+    /// Update review session progress
+    pub fn update_review_session_progress(&self, session_id: &str, progress: &crate::models::gerrit::ReviewProgress) -> Result<(), HyperReviewError> {
+        let progress_json = serde_json::to_string(progress).unwrap_or_default();
+        let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
+
+        self.conn.execute(
+            "UPDATE review_sessions SET progress_data = ?1, updated_at = ?2 WHERE id = ?3",
+            params![progress_json, now, session_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all review sessions for a change
+    pub fn get_review_sessions_for_change(&self, change_id: &str) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE change_id = ?1 ORDER BY created_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![change_id], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            sessions.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(sessions)
+    }
+
+    /// Store or update a review session
+    pub fn store_review_session(&self, session: &crate::models::gerrit::ReviewSession) -> Result<(), HyperReviewError> {
+        let progress_json = serde_json::to_string(&session.progress).unwrap_or_default();
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO review_sessions 
+             (id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                session.id,
+                session.change_id,
+                session.patch_set_number,
+                session.reviewer_id,
+                session.mode.to_string(),
+                session.status.to_string(),
+                progress_json,
+                session.created_at,
+                session.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all review sessions for a reviewer
+    pub fn get_review_sessions_for_reviewer(&self, reviewer_id: &str) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE reviewer_id = ?1 ORDER BY updated_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![reviewer_id], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            sessions.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(sessions)
+    }
+
+    /// Get active review sessions (in progress)
+    pub fn get_active_review_sessions(&self) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
+             FROM review_sessions WHERE status = 'in_progress' ORDER BY updated_at DESC"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map([], |row| {
+            let progress_json: String = row.get(6)?;
+            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ReviewSession {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                reviewer_id: row.get(3)?,
+                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
+                progress,
+                created_at: row.get(7)?,
+                updated_at: row.get(8)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut sessions = Vec::new();
+        for row in rows {
+            sessions.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(sessions)
+    }
+
+    // ============================================================================
+    // Change File Management Methods
+    // ============================================================================
+
+    /// Store downloaded change files
+    pub fn store_change_file(&self, file: &crate::models::gerrit::ChangeFile) -> Result<(), HyperReviewError> {
+        let diff_json = serde_json::to_string(&file.diff).unwrap_or_default();
+
+        self.conn.execute(
+            "INSERT OR REPLACE INTO change_files 
+             (id, change_id, patch_set_number, file_path, change_type, old_content, new_content, diff_data, file_size, downloaded_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                file.id,
+                file.change_id,
+                file.patch_set_number,
+                file.file_path,
+                file.change_type.to_string(),
+                file.old_content,
+                file.new_content,
+                diff_json,
+                file.file_size,
+                file.downloaded_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get all files for a change and patch set
+    pub fn get_change_files(&self, change_id: &str, patch_set_number: u32) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, change_id, patch_set_number, file_path, change_type, old_content, new_content, diff_data, file_size, downloaded_at
+             FROM change_files WHERE change_id = ?1 AND patch_set_number = ?2 ORDER BY file_path"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![change_id, patch_set_number], |row| {
+            let diff_json: String = row.get(7)?;
+            let diff = serde_json::from_str(&diff_json).unwrap_or_default();
+
+            Ok(crate::models::gerrit::ChangeFile {
+                id: row.get(0)?,
+                change_id: row.get(1)?,
+                patch_set_number: row.get(2)?,
+                file_path: row.get(3)?,
+                change_type: crate::models::gerrit::FileChangeType::from_string(&row.get::<_, String>(4)?),
+                old_content: row.get(5)?,
+                new_content: row.get(6)?,
+                diff,
+                file_size: row.get(8)?,
+                downloaded_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut files = Vec::new();
+        for row in rows {
+            files.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(files)
+    }
+
+    /// Get all files for a change by Gerrit change ID and patch set
+    pub fn get_change_files_by_gerrit_id(&self, gerrit_change_id: &str, patch_set_number: u32) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
+        // First find the database record ID for this Gerrit change ID
+        let db_change_id = self.conn.query_row(
+            "SELECT id FROM gerrit_changes WHERE change_id = ?1",
+            params![gerrit_change_id],
+            |row| row.get::<_, String>(0)
+        ).map_err(HyperReviewError::Database)?;
+
+        // Now get the files using the database record ID
+        self.get_change_files(&db_change_id, patch_set_number)
+    }
+
+    /// Check if change files are downloaded
+    pub fn is_change_downloaded(&self, change_id: &str, patch_set_number: u32) -> Result<bool, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT COUNT(*) FROM change_files WHERE change_id = ?1 AND patch_set_number = ?2"
+        ).map_err(HyperReviewError::Database)?;
+
+        let count: i64 = stmt.query_row(params![change_id, patch_set_number], |row| row.get(0))
+            .map_err(HyperReviewError::Database)?;
+
+        Ok(count > 0)
+    }
+
+    /// Check if change files are downloaded by Gerrit change ID
+    pub fn is_change_downloaded_by_gerrit_id(&self, gerrit_change_id: &str, patch_set_number: u32) -> Result<bool, HyperReviewError> {
+        // First find the database record ID for this Gerrit change ID
+        let db_change_id_result = self.conn.query_row(
+            "SELECT id FROM gerrit_changes WHERE change_id = ?1",
+            params![gerrit_change_id],
+            |row| row.get::<_, String>(0)
+        );
+
+        match db_change_id_result {
+            Ok(db_change_id) => {
+                // Now check if files are downloaded using the database record ID
+                self.is_change_downloaded(&db_change_id, patch_set_number)
+            }
+            Err(_) => {
+                // Change not found in database, so it's not downloaded
+                Ok(false)
+            }
+        }
+    }
+
+    // ============================================================================
+    // File Review Management Methods
+    // ============================================================================
+
+    /// Create or update file review status
+    pub fn store_file_review(&self, file_review: &crate::models::gerrit::FileReview) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO file_reviews 
+             (id, session_id, file_path, review_status, last_reviewed, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                file_review.id,
+                file_review.session_id,
+                file_review.file_path,
+                file_review.review_status.to_string(),
+                file_review.last_reviewed,
+                file_review.created_at,
+                file_review.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get file reviews for a session
+    pub fn get_file_reviews_for_session(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::FileReview>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, review_status, last_reviewed, created_at, updated_at
+             FROM file_reviews WHERE session_id = ?1 ORDER BY file_path"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(crate::models::gerrit::FileReview {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                review_status: crate::models::gerrit::FileReviewStatus::from_string(&row.get::<_, String>(3)?),
+                last_reviewed: row.get(4)?,
+                created_at: row.get(5)?,
+                updated_at: row.get(6)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut reviews = Vec::new();
+        for row in rows {
+            reviews.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(reviews)
+    }
+
+    // ============================================================================
+    // Review Comment Management Methods
+    // ============================================================================
+
+    /// Store a review comment
+    pub fn store_review_comment(&self, comment: &crate::models::gerrit::ReviewComment) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO review_comments 
+             (id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                comment.id,
+                comment.session_id,
+                comment.file_path,
+                comment.line_number,
+                comment.content,
+                comment.comment_type.to_string(),
+                comment.status.to_string(),
+                comment.parent_comment_id,
+                comment.created_at,
+                comment.updated_at
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get comments for a file in a session
+    pub fn get_review_comments_for_file(&self, session_id: &str, file_path: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
+             FROM review_comments WHERE session_id = ?1 AND file_path = ?2 ORDER BY line_number, created_at"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![session_id, file_path], |row| {
+            Ok(crate::models::gerrit::ReviewComment {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                line_number: row.get(3)?,
+                content: row.get(4)?,
+                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
+                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
+                parent_comment_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut comments = Vec::new();
+        for row in rows {
+            comments.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(comments)
+    }
+
+    /// Get all comments for a session
+    pub fn get_review_comments_for_session(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
+             FROM review_comments WHERE session_id = ?1 ORDER BY file_path, line_number, created_at"
+        ).map_err(HyperReviewError::Database)?;
+
+        let rows = stmt.query_map(params![session_id], |row| {
+            Ok(crate::models::gerrit::ReviewComment {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                line_number: row.get(3)?,
+                content: row.get(4)?,
+                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
+                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
+                parent_comment_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        let mut comments = Vec::new();
+        for row in rows {
+            comments.push(row.map_err(HyperReviewError::Database)?);
+        }
+
+        Ok(comments)
+    }
+
+    /// Delete a review comment
+    pub fn delete_review_comment(&self, comment_id: &str) -> Result<bool, HyperReviewError> {
+        let rows_affected = self.conn.execute(
+            "DELETE FROM review_comments WHERE id = ?1",
+            params![comment_id],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(rows_affected > 0)
+    }
+
+    /// Get a single review comment by ID
+    pub fn get_review_comment(&self, comment_id: &str) -> Result<Option<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
+             FROM review_comments WHERE id = ?1"
+        ).map_err(HyperReviewError::Database)?;
+
+        let mut rows = stmt.query_map(params![comment_id], |row| {
+            Ok(crate::models::gerrit::ReviewComment {
+                id: row.get(0)?,
+                session_id: row.get(1)?,
+                file_path: row.get(2)?,
+                line_number: row.get(3)?,
+                content: row.get(4)?,
+                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
+                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
+                parent_comment_id: row.get(7)?,
+                created_at: row.get(8)?,
+                updated_at: row.get(9)?,
+            })
+        }).map_err(HyperReviewError::Database)?;
+
+        match rows.next() {
+            Some(row) => Ok(Some(row.map_err(HyperReviewError::Database)?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Update a review comment
+    pub fn update_review_comment(&self, comment: &crate::models::gerrit::ReviewComment) -> Result<(), HyperReviewError> {
+        self.conn.execute(
+            "UPDATE review_comments 
+             SET content = ?1, comment_type = ?2, status = ?3, updated_at = ?4
+             WHERE id = ?5",
+            params![
+                comment.content,
+                comment.comment_type.to_string(),
+                comment.status.to_string(),
+                comment.updated_at,
+                comment.id
+            ],
+        ).map_err(HyperReviewError::Database)?;
+
+        Ok(())
+    }
+
+    /// Get session comments (alias for compatibility)
+    pub fn get_session_comments(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        self.get_review_comments_for_session(session_id)
+    }
+
+    /// Get file comments (alias for compatibility)
+    pub fn get_file_comments(&self, session_id: &str, file_path: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+        self.get_review_comments_for_file(session_id, file_path)
+    }
+
+    // ============================================================================
+    // Review Template Management Methods
+    // ============================================================================
+
 }

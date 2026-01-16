@@ -4,6 +4,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+pub mod task;
+pub mod gerrit;
+
 /// Repository Entity
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Repository {
@@ -109,6 +112,7 @@ pub struct Tag {
 
 /// Task Status
 #[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
     Active,
     Pending,
@@ -116,7 +120,83 @@ pub enum TaskStatus {
     Blocked,
 }
 
-/// Task Entity
+/// Task Type
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum TaskType {
+    Code,
+    Sql,
+    Security,
+}
+
+/// File Status for Task Files
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum FileStatus {
+    Modified,
+    Added,
+    Deleted,
+}
+
+/// File Review Status
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum FileReviewStatus {
+    Pending,
+    Approved,
+    Concern,
+    MustChange,
+    Question,
+}
+
+/// Task File - File associated with a task
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct TaskFile {
+    pub id: String,
+    pub path: String,
+    pub name: String,
+    pub status: FileStatus,
+    #[serde(rename = "reviewStatus")]
+    pub review_status: Option<FileReviewStatus>,
+    #[serde(rename = "reviewComment")]
+    pub review_comment: Option<String>,
+}
+
+/// Update File Review Status Parameters
+#[derive(Debug, Serialize, Deserialize)]
+pub struct UpdateFileReviewParams {
+    pub task_id: String,
+    pub file_id: String,
+    #[serde(rename = "reviewStatus")]
+    pub review_status: FileReviewStatus,
+    #[serde(rename = "reviewComment")]
+    pub review_comment: Option<String>,
+}
+
+/// File Review Comment - Historical record of all review comments for a file
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileReviewComment {
+    pub id: String,
+    pub task_id: String,
+    pub file_id: String,
+    #[serde(rename = "reviewStatus")]
+    pub review_status: String,
+    #[serde(rename = "reviewComment")]
+    pub review_comment: String,
+    #[serde(rename = "submittedBy")]
+    pub submitted_by: String,
+    #[serde(rename = "submittedAt")]
+    pub submitted_at: String,
+}
+
+/// Create Local Task Parameters
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CreateLocalTaskParams {
+    pub title: String,
+    pub task_type: TaskType,
+    pub files: Vec<String>, // List of file paths
+}
+
+/// Task Entity (extended with files and type)
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Task {
     pub id: String,
@@ -129,6 +209,10 @@ pub struct Task {
     pub updated_at: String,
     pub due_date: Option<String>,
     pub metadata: HashMap<String, String>,
+    #[serde(rename = "type")]
+    pub task_type: Option<TaskType>,
+    #[serde(default)]
+    pub files: Vec<TaskFile>,
 }
 
 /// Review Statistics
@@ -155,13 +239,45 @@ pub enum HeatmapCategory {
 /// Heatmap Item
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HeatmapItem {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    pub impact: HeatmapCategory,
+    pub score: u32,  // Impact score as integer (0-100)
+    pub exists: bool,  // Whether the file exists in the working directory
+}
+
+/// File Node for file tree
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileNode {
+    pub id: String,
+    pub name: String,
+    pub path: String,
+    #[serde(rename = "type")]
+    pub file_type: String,  // "file" or "folder"
+    pub status: String,     // "modified", "added", "deleted", "none"
+    pub children: Option<Vec<FileNode>>,
+    pub stats: Option<FileStats>,
+    pub exists: bool,       // Whether the file exists in the working directory
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FileStats {
+    pub added: u32,
+    pub removed: u32,
+}
+
+/// Detailed diff statistics for accurate metrics
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct DiffStats {
     pub file_path: String,
-    pub impact_score: f32,
-    pub churn_score: f32,
+    pub change_type: String, // "added", "deleted", "modified", "renamed", etc.
+    pub added_lines: u32,
+    pub removed_lines: u32,
+    pub total_lines_old: u32,
+    pub total_lines_new: u32,
     pub complexity_score: f32,
-    pub change_frequency: u32,
-    pub lines_of_code: u32,
-    pub category: HeatmapCategory,
+    pub impact_score: f32,
 }
 
 /// Checklist Categories
@@ -341,4 +457,85 @@ pub struct CommentParams {
 pub struct UpdateCommentParams {
     pub comment_id: String,
     pub content: String,
+}
+
+/// Review Guide Categories
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum ReviewGuideCategory {
+    Security,
+    Performance,
+    Style,
+    Logic,
+}
+
+/// Review Guide Severity
+#[derive(Debug, Serialize, Deserialize, Clone)]
+#[serde(rename_all = "lowercase")]
+pub enum ReviewGuideSeverity {
+    High,
+    Medium,
+    Low,
+}
+
+/// Review Guide Item
+/// category 使用字符串类型以支持中文类别
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ReviewGuideItem {
+    pub id: String,
+    pub category: String, // 直接使用字符串，支持中文如 "安全性", "性能优化", "代码规范" 等
+    pub title: String,
+    pub description: String,
+    pub severity: ReviewGuideSeverity,
+    #[serde(rename = "referenceUrl")]
+    pub reference_url: Option<String>,
+    #[serde(rename = "applicableExtensions")]
+    pub applicable_extensions: Vec<String>,
+}
+
+/// Checklist JSON Item (from docs/CheckList.json)
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ChecklistJsonItem {
+    pub id: String,
+    pub category: String,
+    pub subcategory: String,
+    pub description: String,
+    #[serde(rename = "implementationStatus")]
+    pub implementation_status: String,
+}
+
+/// Helper function to map checklist category to review guide category
+pub fn map_checklist_category(category: &str) -> ReviewGuideCategory {
+    match category {
+        "安全性" | "Security" => ReviewGuideCategory::Security,
+        "性能优化" | "性能" | "Performance" => ReviewGuideCategory::Performance,
+        "可扩展性" | "可维护性/可复用性" | "并发与防重" => ReviewGuideCategory::Logic,
+        "通用原则" | "数据库" | "代码规范" | "可读性" | "消除重复" | "异常处理"
+        | "日志打印" | "多线程" | "接口检查" | "内存" | "输入校验"
+        | "接口调用" | "版本基础" | "其他" | "前端" | "程序提交"
+        | "前端代码提交" | "General" => ReviewGuideCategory::Style,
+        _ => ReviewGuideCategory::Style,
+    }
+}
+
+/// Helper function to map checklist severity based on subcategory
+pub fn map_checklist_severity(subcategory: &str) -> ReviewGuideSeverity {
+    match subcategory {
+        "安全性" => ReviewGuideSeverity::High,
+        "性能" | "并发与防重" | "内存" => ReviewGuideSeverity::Medium,
+        "SQL编写" | "索引规约" => ReviewGuideSeverity::High,
+        "异常处理" | "多线程" => ReviewGuideSeverity::Medium,
+        _ => ReviewGuideSeverity::Low,
+    }
+}
+
+/// Helper function to get applicable extensions based on subcategory
+pub fn get_applicable_extensions(subcategory: &str) -> Vec<String> {
+    match subcategory {
+        "安全性" | "多线程" | "接口调用" => vec![".java".to_string(), ".ts".to_string(), ".go".to_string(), ".py".to_string()],
+        "SQL编写" | "索引规约" | "建表规约" | "数据库" => vec![".sql".to_string(), ".java".to_string(), ".xml".to_string()],
+        "前端代码提交" | "前端" => vec![".tsx".to_string(), ".jsx".to_string(), ".ts".to_string(), ".js".to_string(), ".html".to_string()],
+        "日志打印" | "可读性" | "代码规范" => vec![".java".to_string(), ".ts".to_string(), ".go".to_string(), ".py".to_string(), ".rs".to_string()],
+        _ => vec![".java".to_string(), ".ts".to_string(), ".tsx".to_string(), ".go".to_string(), ".py".to_string(), ".rs".to_string()],
+    }
 }

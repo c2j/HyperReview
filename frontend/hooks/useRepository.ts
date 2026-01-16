@@ -4,8 +4,6 @@
  */
 
 import { useState, useEffect, useCallback } from 'react';
-import { useRepositoryStore } from '../store/reviewStore';
-import { useTaskStore } from '../store/reviewStore';
 import { useReviewStore } from '../store/reviewStore';
 import { useApiClient } from '../api/client';
 import { handleAsyncErrorWithToast } from '../utils/errorHandler';
@@ -25,14 +23,17 @@ export const useCurrentRepository = () => {
     loading,
     error,
     setCurrentRepo,
-    clearError
+    clearError,
+    setTasks,
+    setReviewStats,
+    setHeatmap,
+    setChecklist,
+    resetAll,
     // setLoading and setError are not used directly, handled by setRepositoryLoading and handleAsyncErrorWithToast
-  } = useRepositoryStore();
+  } = useReviewStore();
 
   const { setRepositoryLoading } = useLoading();
   const { loadRepo } = useApiClient();
-  const { setTasks, setReviewStats, setHeatmap, setChecklist } = useTaskStore();
-  const { resetAll } = useReviewStore();
 
   const loadRepository = useCallback(
     async (path: string) => {
@@ -44,7 +45,7 @@ export const useCurrentRepository = () => {
           const repo = await loadRepo(path);
           return repo;
         },
-        `Repository loaded: ${path.split('/').pop()}`
+        `Repository loaded: ${path.split('/').pop()}`,
       );
 
       setRepositoryLoading(false);
@@ -62,7 +63,17 @@ export const useCurrentRepository = () => {
 
       return result;
     },
-    [clearError, setRepositoryLoading, setCurrentRepo, setTasks, setReviewStats, setHeatmap, setChecklist, resetAll, handleAsyncErrorWithToast]
+    [
+      clearError,
+      setRepositoryLoading,
+      setCurrentRepo,
+      setTasks,
+      setReviewStats,
+      setHeatmap,
+      setChecklist,
+      resetAll,
+      handleAsyncErrorWithToast,
+    ],
   );
 
   const clearRepository = () => {
@@ -80,7 +91,7 @@ export const useCurrentRepository = () => {
     loading,
     error,
     loadRepository,
-    clearRepository
+    clearRepository,
   };
 };
 
@@ -97,9 +108,9 @@ export const useRecentRepositories = () => {
     loading,
     error,
     setRecentRepos,
-    clearError
+    clearError,
     // setLoading and setError are not used directly, handled by setRepositoryLoading and handleAsyncErrorWithToast
-  } = useRepositoryStore();
+  } = useReviewStore();
 
   const { setRepositoryLoading } = useLoading();
   const { getRecentRepos } = useApiClient();
@@ -108,13 +119,10 @@ export const useRecentRepositories = () => {
     clearError();
     setRepositoryLoading(true);
 
-    const result = await handleAsyncErrorWithToast(
-      async () => {
-        const repos = await getRecentRepos();
-        return repos;
-      },
-      'Recent repositories loaded'
-    );
+    const result = await handleAsyncErrorWithToast(async () => {
+      const repos = await getRecentRepos();
+      return repos;
+    }, 'Recent repositories loaded');
 
     setRepositoryLoading(false);
 
@@ -134,7 +142,7 @@ export const useRecentRepositories = () => {
     loading,
     error,
     loadRecentRepos,
-    refreshRecentRepos
+    refreshRecentRepos,
   };
 };
 
@@ -151,9 +159,9 @@ export const useBranches = () => {
     loading,
     error,
     setBranches,
-    clearError
+    clearError,
     // setLoading and setError are not used directly, handled by setRepositoryLoading and handleAsyncErrorWithToast
-  } = useRepositoryStore();
+  } = useReviewStore();
 
   const { setRepositoryLoading } = useLoading();
   const { getBranches } = useApiClient();
@@ -162,13 +170,10 @@ export const useBranches = () => {
     clearError();
     setRepositoryLoading(true);
 
-    const result = await handleAsyncErrorWithToast(
-      async () => {
-        const branchesList = await getBranches();
-        return branchesList;
-      },
-      'Branches loaded'
-    );
+    const result = await handleAsyncErrorWithToast(async () => {
+      const branchesList = await getBranches();
+      return branchesList;
+    }, 'Branches loaded');
 
     setRepositoryLoading(false);
 
@@ -200,7 +205,7 @@ export const useBranches = () => {
     loading,
     error,
     loadBranches,
-    refreshBranches
+    refreshBranches,
   };
 };
 
@@ -226,7 +231,7 @@ export const useRepoDialog = () => {
         useErrorStore.getState().showToast({
           severity: ErrorSeverity.SUCCESS,
           title: 'Success',
-          message: 'Repository selected successfully'
+          message: 'Repository selected successfully',
         });
       }
 
@@ -237,7 +242,7 @@ export const useRepoDialog = () => {
       useErrorStore.getState().showToast({
         severity: formatted.severity,
         title: formatted.title,
-        message: formatted.message
+        message: formatted.message,
       });
       return null;
     } finally {
@@ -287,7 +292,7 @@ export const useRepositoryActions = () => {
       }
       return repo;
     },
-    [loadRepository, loadBranches, loadRecentRepos]
+    [loadRepository, loadBranches, loadRecentRepos],
   );
 
   // Refresh current repository data
@@ -315,7 +320,7 @@ export const useRepositoryActions = () => {
     // Utilities
     openDialog,
     loadRecentRepos,
-    loadBranches
+    loadBranches,
   };
 };
 
@@ -327,7 +332,7 @@ export const useRepositoryActions = () => {
  * Hook for checking repository status and health
  */
 export const useRepositoryStatus = () => {
-  const { currentRepo, branches } = useRepositoryStore();
+  const { currentRepo, branches } = useReviewStore();
 
   const isRepoLoaded = currentRepo !== null;
   const isBranchSelected = branches.some((branch) => branch.is_current);
@@ -344,14 +349,14 @@ export const useRepositoryStatus = () => {
       headCommit: currentRepo.head_commit,
       isActive: currentRepo.is_active,
       branchCount: branches.length,
-      lastCommitDate: currentRepo.last_opened
+      lastCommitDate: currentRepo.last_opened,
     };
   }, [currentRepo, branches]);
 
   return {
     isRepoLoaded,
     isBranchSelected,
-    getRepositoryInfo
+    getRepositoryInfo,
   };
 };
 
@@ -390,6 +395,6 @@ export const useInitializeRepository = () => {
     initialized,
     showDialog,
     handleRepositorySelected,
-    handleSkip
+    handleSkip,
   };
 };

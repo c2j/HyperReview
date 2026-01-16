@@ -1,0 +1,427 @@
+// Comment Repository for local comment storage
+// Manages database operations for Gerrit comments
+
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::collections::HashMap;
+use rusqlite::{params, Connection};
+use log::{info, warn, error, debug};
+
+use crate::errors::HyperReviewError;
+use crate::models::gerrit::*;
+
+/// Repository pattern for GerritComment operations
+pub struct CommentRepository {
+    conn: Arc<Mutex<Connection>>,
+}
+
+impl CommentRepository {
+    pub fn new(conn: Arc<Mutex<Connection>>) -> Self {
+        Self { conn }
+    }
+    
+    /// Create a new local comment
+    pub fn create_comment(&self, comment: &GerritComment) -> Result<String, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let author_json = serde_json::to_string(&comment.author)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize author: {}", e),
+                operation: "create_comment".to_string(),
+            })?;
+            
+        let range_json = comment.range.as_ref()
+            .map(|r| serde_json::to_string(r))
+            .transpose()
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize range: {}", e),
+                operation: "create_comment".to_string(),
+            })?
+            .unwrap_or_else(|| "null".to_string());
+            
+        let properties_json = serde_json::to_string(&comment.properties)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize properties: {}", e),
+                operation: "create_comment".to_string(),
+            })?;
+        
+        conn.execute(
+            "INSERT INTO gerrit_comments (
+                id, gerrit_comment_id, change_id, patch_set_id, file_path, side, line,
+                range, message, author, created, updated, status, unresolved,
+                parent, robot_id, properties
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
+            params![
+                comment.id, comment.gerrit_comment_id, comment.change_id,
+                comment.patch_set_id, comment.file_path, comment.side.to_string(),
+                comment.line, range_json, comment.message, author_json,
+                comment.created, comment.updated, comment.status.to_string(),
+                comment.unresolved as i32, comment.parent, comment.robot_id,
+                properties_json
+            ],
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to create comment: {}", e),
+            operation: "create_comment".to_string(),
+        })?;
+        
+        info!("Created comment: {} for change {}", comment.id, comment.change_id);
+        Ok(comment.id.clone())
+    }
+    
+    /// Get all comments for a specific change
+    pub fn get_comments_by_change(&self, change_id: &str) -> Result<Vec<GerritComment>, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut stmt = conn.prepare(
+            "SELECT * FROM gerrit_comments WHERE change_id = ?1 ORDER BY created ASC"
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to prepare statement: {}", e),
+            operation: "get_comments_by_change".to_string(),
+        })?;
+        
+        let comments = stmt.query_map([change_id], |row| {
+            let author_json: String = row.get(9)?;
+            let author: GerritUser = serde_json::from_str(&author_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize author: {}", e)
+                ))?;
+                
+            let range_json: String = row.get(7)?;
+            let range: Option<CommentRange> = if range_json == "null" {
+                None
+            } else {
+                Some(serde_json::from_str(&range_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                        format!("Failed to deserialize range: {}", e)
+                    ))?)
+            };
+            
+            let properties_json: String = row.get(16)?;
+            let properties: HashMap<String, String> = serde_json::from_str(&properties_json)
+                .unwrap_or_default();
+            
+            Ok(GerritComment {
+                id: row.get(0)?,
+                gerrit_comment_id: row.get(1)?,
+                change_id: row.get(2)?,
+                patch_set_id: row.get(3)?,
+                file_path: row.get(4)?,
+                side: CommentSide::from_string(&row.get::<String>(5)?),
+                line: row.get(6)?,
+                range,
+                message: row.get(8)?,
+                author,
+                created: row.get(10)?,
+                updated: row.get(11)?,
+                status: CommentSyncStatus::from_string(&row.get::<String>(12)?),
+                unresolved: row.get(13)?,
+                parent: row.get(14)?,
+                robot_id: row.get(15)?,
+                properties,
+            })
+        }).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to query comments: {}", e),
+            operation: "get_comments_by_change".to_string(),
+        })?;
+        
+        comments.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyperReviewError::Database {
+                message: format!("Failed to collect comments: {}", e),
+                operation: "get_comments_by_change".to_string(),
+            })
+    }
+    
+    /// Get comments for a specific file in a change
+    pub fn get_comments_by_file(&self, change_id: &str, file_path: &str) -> Result<Vec<GerritComment>, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut stmt = conn.prepare(
+            "SELECT * FROM gerrit_comments WHERE change_id = ?1 AND file_path = ?2 ORDER BY line ASC"
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to prepare statement: {}", e),
+            operation: "get_comments_by_file".to_string(),
+        })?;
+        
+        let comments = stmt.query_map([change_id, file_path], |row| {
+            let author_json: String = row.get(9)?;
+            let author: GerritUser = serde_json::from_str(&author_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize author: {}", e)
+                ))?;
+                
+            let range_json: String = row.get(7)?;
+            let range: Option<CommentRange> = if range_json == "null" {
+                None
+            } else {
+                Some(serde_json::from_str(&range_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                        format!("Failed to deserialize range: {}", e)
+                    ))?)
+            };
+            
+            let properties_json: String = row.get(16)?;
+            let properties: HashMap<String, String> = serde_json::from_str(&properties_json)
+                .unwrap_or_default();
+            
+            Ok(GerritComment {
+                id: row.get(0)?,
+                gerrit_comment_id: row.get(1)?,
+                change_id: row.get(2)?,
+                patch_set_id: row.get(3)?,
+                file_path: row.get(4)?,
+                side: CommentSide::from_string(&row.get::<String>(5)?),
+                line: row.get(6)?,
+                range,
+                message: row.get(8)?,
+                author,
+                created: row.get(10)?,
+                updated: row.get(11)?,
+                status: CommentSyncStatus::from_string(&row.get::<String>(12)?),
+                unresolved: row.get(13)?,
+                parent: row.get(14)?,
+                robot_id: row.get(15)?,
+                properties,
+            })
+        }).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to query comments: {}", e),
+            operation: "get_comments_by_file".to_string(),
+        })?;
+        
+        comments.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyperReviewError::Database {
+                message: format!("Failed to collect comments: {}", e),
+                operation: "get_comments_by_file".to_string(),
+            })
+    }
+    
+    /// Get comment by ID
+    pub fn get_comment(&self, id: &str) -> Result<Option<GerritComment>, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut stmt = conn.prepare(
+            "SELECT * FROM gerrit_comments WHERE id = ?1"
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to prepare statement: {}", e),
+            operation: "get_comment".to_string(),
+        })?;
+        
+        let comment = stmt.query_row([id], |row| {
+            let author_json: String = row.get(9)?;
+            let author: GerritUser = serde_json::from_str(&author_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize author: {}", e)
+                ))?;
+                
+            let range_json: String = row.get(7)?;
+            let range: Option<CommentRange> = if range_json == "null" {
+                None
+            } else {
+                Some(serde_json::from_str(&range_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                        format!("Failed to deserialize range: {}", e)
+                    ))?)
+            };
+            
+            let properties_json: String = row.get(16)?;
+            let properties: HashMap<String, String> = serde_json::from_str(&properties_json)
+                .unwrap_or_default();
+            
+            Ok(GerritComment {
+                id: row.get(0)?,
+                gerrit_comment_id: row.get(1)?,
+                change_id: row.get(2)?,
+                patch_set_id: row.get(3)?,
+                file_path: row.get(4)?,
+                side: CommentSide::from_string(&row.get::<String>(5)?),
+                line: row.get(6)?,
+                range,
+                message: row.get(8)?,
+                author,
+                created: row.get(10)?,
+                updated: row.get(11)?,
+                status: CommentSyncStatus::from_string(&row.get::<String>(12)?),
+                unresolved: row.get(13)?,
+                parent: row.get(14)?,
+                robot_id: row.get(15)?,
+                properties,
+            })
+        }).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to query comment: {}", e),
+            operation: "get_comment".to_string(),
+        });
+        
+        match comment {
+            Ok(c) => Ok(Some(c)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(HyperReviewError::Database {
+                message: format!("Failed to get comment: {}", e),
+                operation: "get_comment".to_string(),
+            })
+        }
+    }
+    
+    /// Update a comment
+    pub fn update_comment(&self, comment: &GerritComment) -> Result<(), HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let author_json = serde_json::to_string(&comment.author)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize author: {}", e),
+                operation: "update_comment".to_string(),
+            })?;
+            
+        let range_json = comment.range.as_ref()
+            .map(|r| serde_json::to_string(r))
+            .transpose()
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize range: {}", e),
+                operation: "update_comment".to_string(),
+            })?
+            .unwrap_or_else(|| "null".to_string());
+            
+        let properties_json = serde_json::to_string(&comment.properties)
+            .map_err(|e| HyperReviewError::Serialization {
+                message: format!("Failed to serialize properties: {}", e),
+                operation: "update_comment".to_string(),
+            })?;
+        
+        conn.execute(
+            "UPDATE gerrit_comments SET
+                message = ?2, updated = ?3, status = ?4, unresolved = ?5,
+                properties = ?6
+            WHERE id = ?1",
+            params![
+                comment.id, comment.message, comment.updated, comment.status.to_string(),
+                comment.unresolved as i32, properties_json
+            ],
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to update comment: {}", e),
+            operation: "update_comment".to_string(),
+        })?;
+        
+        info!("Updated comment: {}", comment.id);
+        Ok(())
+    }
+    
+    /// Delete a comment
+    pub fn delete_comment(&self, id: &str) -> Result<(), HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        conn.execute(
+            "DELETE FROM gerrit_comments WHERE id = ?1",
+            [id],
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to delete comment: {}", e),
+            operation: "delete_comment".to_string(),
+        })?;
+        
+        info!("Deleted comment: {}", id);
+        Ok(())
+    }
+    
+    /// Get unresolved comments for a change
+    pub fn get_unresolved_comments(&self, change_id: &str) -> Result<Vec<GerritComment>, HyperReviewError> {
+        let conn = self.conn.lock().unwrap();
+        
+        let mut stmt = conn.prepare(
+            "SELECT * FROM gerrit_comments WHERE change_id = ?1 AND unresolved = 1 ORDER BY created ASC"
+        ).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to prepare statement: {}", e),
+            operation: "get_unresolved_comments".to_string(),
+        })?;
+        
+        let comments = stmt.query_map([change_id], |row| {
+            let author_json: String = row.get(9)?;
+            let author: GerritUser = serde_json::from_str(&author_json)
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                    format!("Failed to deserialize author: {}", e)
+                ))?;
+                
+            let range_json: String = row.get(7)?;
+            let range: Option<CommentRange> = if range_json == "null" {
+                None
+            } else {
+                Some(serde_json::from_str(&range_json)
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(
+                        format!("Failed to deserialize range: {}", e)
+                    ))?)
+            };
+            
+            let properties_json: String = row.get(16)?;
+            let properties: HashMap<String, String> = serde_json::from_str(&properties_json)
+                .unwrap_or_default();
+            
+            Ok(GerritComment {
+                id: row.get(0)?,
+                gerrit_comment_id: row.get(1)?,
+                change_id: row.get(2)?,
+                patch_set_id: row.get(3)?,
+                file_path: row.get(4)?,
+                side: CommentSide::from_string(&row.get::<String>(5)?),
+                line: row.get(6)?,
+                range,
+                message: row.get(8)?,
+                author,
+                created: row.get(10)?,
+                updated: row.get(11)?,
+                status: CommentSyncStatus::from_string(&row.get::<String>(12)?),
+                unresolved: row.get(13)?,
+                parent: row.get(14)?,
+                robot_id: row.get(15)?,
+                properties,
+            })
+        }).map_err(|e| HyperReviewError::Database {
+            message: format!("Failed to query comments: {}", e),
+            operation: "get_unresolved_comments".to_string(),
+        })?;
+        
+        comments.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| HyperReviewError::Database {
+                message: format!("Failed to collect comments: {}", e),
+                operation: "get_unresolved_comments".to_string(),
+            })
+    }
+}
+
+/// String conversion helpers for enums
+impl CommentSide {
+    pub fn from_string(s: &str) -> Self {
+        match s {
+            "Parent" => CommentSide::Parent,
+            "Revision" => CommentSide::Revision,
+            _ => CommentSide::Revision,
+        }
+    }
+    
+    pub fn to_string(&self) -> String {
+        match self {
+            CommentSide::Parent => "Parent".to_string(),
+            CommentSide::Revision => "Revision".to_string(),
+        }
+    }
+}
+
+impl CommentSyncStatus {
+    pub fn from_string(s: &str) -> Self {
+        match s {
+            "LocalOnly" => CommentSyncStatus::LocalOnly,
+            "SyncPending" => CommentSyncStatus::SyncPending,
+            "Synced" => CommentSyncStatus::Synced,
+            "SyncFailed" => CommentSyncStatus::SyncFailed,
+            "ConflictDetected" => CommentSyncStatus::ConflictDetected,
+            "ModifiedLocally" => CommentSyncStatus::ModifiedLocally,
+            _ => CommentSyncStatus::LocalOnly,
+        }
+    }
+    
+    pub fn to_string(&self) -> String {
+        match self {
+            CommentSyncStatus::LocalOnly => "LocalOnly".to_string(),
+            CommentSyncStatus::SyncPending => "SyncPending".to_string(),
+            CommentSyncStatus::Synced => "Synced".to_string(),
+            CommentSyncStatus::SyncFailed => "SyncFailed".to_string(),
+            CommentSyncStatus::ConflictDetected => "ConflictDetected".to_string(),
+            CommentSyncStatus::ModifiedLocally => "ModifiedLocally".to_string(),
+        }
+    }
+}

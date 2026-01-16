@@ -17,6 +17,8 @@ interface RepositoryState {
   currentRepo: Repository | null;
   branches: Branch[];
   recentRepos: Repository[];
+  selectedBaseBranch: string | null;
+  selectedHeadBranch: string | null;
   loading: boolean;
   error: string | null;
 
@@ -24,6 +26,8 @@ interface RepositoryState {
   setCurrentRepo: (repo: Repository | null) => void;
   setBranches: (branches: Branch[]) => void;
   setRecentRepos: (repos: Repository[]) => void;
+  setSelectedBaseBranch: (branch: string | null) => void;
+  setSelectedHeadBranch: (branch: string | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
   clearError: () => void;
@@ -102,12 +106,16 @@ export const useRepositoryStore = create<RepositoryState>((set) => ({
   currentRepo: null,
   branches: [],
   recentRepos: [],
+  selectedBaseBranch: null,
+  selectedHeadBranch: null,
   loading: false,
   error: null,
 
   setCurrentRepo: (repo) => set({ currentRepo: repo }),
   setBranches: (branches) => set({ branches }),
   setRecentRepos: (repos) => set({ recentRepos: repos }),
+  setSelectedBaseBranch: (branch) => set({ selectedBaseBranch: branch }),
+  setSelectedHeadBranch: (branch) => set({ selectedHeadBranch: branch }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   clearError: () => set({ error: null }),
@@ -175,6 +183,8 @@ export const useReviewStore = create<ReviewStore>((set) => ({
   currentRepo: null,
   branches: [],
   recentRepos: [],
+  selectedBaseBranch: null,
+  selectedHeadBranch: null,
   loading: false,
   error: null,
 
@@ -197,6 +207,8 @@ export const useReviewStore = create<ReviewStore>((set) => ({
   setCurrentRepo: (repo) => set({ currentRepo: repo }),
   setBranches: (branches) => set({ branches }),
   setRecentRepos: (repos) => set({ recentRepos: repos }),
+  setSelectedBaseBranch: (branch) => set({ selectedBaseBranch: branch }),
+  setSelectedHeadBranch: (branch) => set({ selectedHeadBranch: branch }),
   setLoading: (loading) => set({ loading }),
   setError: (error) => set({ error }),
   clearError: () => set({ error: null }),
@@ -256,6 +268,8 @@ export const useReviewStore = create<ReviewStore>((set) => ({
       currentRepo: null,
       branches: [],
       recentRepos: [],
+      selectedBaseBranch: null,
+      selectedHeadBranch: null,
       currentDiff: [],
       comments: [],
       selectedFile: null,

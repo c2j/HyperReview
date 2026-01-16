@@ -1,0 +1,21 @@
+# Dependencies
+node_modules/
+dist/
+build/
+coverage/
+
+# Generated files
+*.min.js
+*.min.css
+
+# Environment files
+.env*
+
+# Temporary files
+*.tmp
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
