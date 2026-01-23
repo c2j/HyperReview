@@ -23,11 +23,9 @@ import SyncStatusModal from './components/SyncStatusModal';
 import BranchCompareModal from './components/BranchCompareModal';
 import GerritImportModal from './components/GerritImportModal';
 import GerritServerModal from './components/GerritServerModal';
-import GerritInstanceSelector from './components/GerritInstanceSelector';
 import TourGuide from './components/TourGuide';
 import { useTranslation } from './i18n';
 import { getGerritConfig } from './api/client';
-import { simpleGerritService, SimpleChange } from './services/gerrit-simple-service';
 
 const App: React.FC = () => {
   const { t, fontSize, ligatures, vimMode } = useTranslation();
@@ -37,7 +35,6 @@ const App: React.FC = () => {
   const [isGerritConfigured, setIsGerritConfigured] = useState(false);
 
   const [isRepoLoaded, setIsRepoLoaded] = useState(false);
-  const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [diffContext, setDiffContext] = useState({ base: 'master', head: 'feature/payment-retry' });
 
@@ -48,20 +45,27 @@ const App: React.FC = () => {
     }
   };
 
-  const handleGerritImport = (change: SimpleChange) => {
-    setGerritImportOpen(false);
-    setActiveTaskId(`gerrit-${change.change_number}`);
-    setIsRepoLoaded(true);
-    setMode('remote');
-    showNotification(`Gerrit Change #${change.change_number} Imported Successfully`);
+  const handleGerritImport = (id: string) => {      try {
+        const change = await simpleGerritService.importChange(id);
+        if (change) {
+          setGerritImportOpen(false);
+          setActiveTaskId(`gerrit-${id}`);
+          setIsRepoLoaded(true);
+          setMode('remote');
+          showNotification(`Gerrit Change #${id} Imported Successfully`);
+        }
+      } catch (e) {
+        console.error('Failed to import Gerrit change:', e);
+        showNotification('Failed to import Gerrit change');
+      }
   };
 
   const startGerritFlow = async () => {
-      const instances = await simpleGerritService.getInstances();
-      if (instances.length === 0) {
+      const config = await getGerritConfig();
+      if (!config || !config.url || config.url.length < 5) {
           setGerritServerOpen(true);
       } else {
-          setGerritInstanceSelectorOpen(true);
+          setGerritImportOpen(true);
       }
   };
 
@@ -75,7 +79,6 @@ const App: React.FC = () => {
 
   const [openRepoModalOpen, setOpenRepoModalOpen] = useState(false);
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
-  const [gerritInstanceSelectorOpen, setGerritInstanceSelectorOpen] = useState(false);
   const [gerritImportOpen, setGerritImportOpen] = useState(false);
   const [gerritServerOpen, setGerritServerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -129,7 +132,6 @@ const App: React.FC = () => {
   const showNotification = useCallback((message: string) => {
     setNotification(message);
     const timer = setTimeout(() => setNotification(null), 2500);
-    return () => clearTimeout(timer);
   }, []);
 
   const handleModeChange = (newMode: 'local' | 'remote') => { 
@@ -137,7 +139,20 @@ const App: React.FC = () => {
       showNotification(`Switched to ${newMode.toUpperCase()} mode`); 
   };
   
+      setGerritImportOpen(false); 
+      setActiveTaskId(`gerrit-${id}`); 
+      setIsRepoLoaded(true); 
+      setMode('remote');
+      showNotification(`Gerrit Change #${id} Imported Successfully`); 
+  };
 
+      const config = await getGerritConfig();
+      if (!config || !config.url || config.url.length < 5) {
+          setGerritServerOpen(true);
+      } else {
+          setGerritImportOpen(true);
+      }
+      };
 
   const handleAction = (msg: string) => {
     if (msg === "Global Search Activated") { setSearchOpen(true); return; }
@@ -216,34 +231,24 @@ const App: React.FC = () => {
       <div className="absolute bottom-0 w-full z-50"><StatusBar mode={mode} /></div>
 
       {/* Modals remain shared but use mode inside */}
-      <Modal isOpen={gerritInstanceSelectorOpen} onClose={() => setGerritInstanceSelectorOpen(false)} title="Select Gerrit Instance">
-        <GerritInstanceSelector
-            onClose={() => setGerritInstanceSelectorOpen(false)}
-            onSelectInstance={() => setGerritImportOpen(true)}
-            onConfigureNew={() => {
-                setGerritInstanceSelectorOpen(false);
-                setGerritServerOpen(true);
-            }}
-        />
-      </Modal>
       <Modal isOpen={gerritServerOpen} onClose={() => setGerritServerOpen(false)} title="Gerrit Server Configuration">
-        <GerritServerModal
-            onClose={() => setGerritServerOpen(false)}
-            onSuccess={() => {
-                setGerritServerOpen(false);
+        <GerritServerModal 
+            onClose={() => setGerritServerOpen(false)} 
+            onSuccess={() => { 
+                setGerritServerOpen(false); 
                 setIsGerritConfigured(true);
-                setGerritImportOpen(true);
-                showNotification("Configuration Saved.");
-            }}
+                setGerritImportOpen(true); 
+                showNotification("Configuration Saved."); 
+            }} 
         />
       </Modal>
-      <Modal isOpen={gerritImportOpen} onClose={() => setGerritImportOpen(false)} title="Import from Gerrit"><GerritImportModal onClose={() => setGerritImportOpen(false)} onImport={handleGerritImport} /></Modal>
+      <Modal isOpen={gerritImportOpen} onClose={() => setGerritImportOpen(false)} title="Import from Gerrit"><GerritImportModal onClose={() => setGerritImportOpen(false)} onImport={handleGerritImport} onOpenSettings={() => { setGerritImportOpen(false); setGerritServerOpen(true); }} /></Modal>
       <Modal isOpen={openRepoModalOpen} onClose={() => setOpenRepoModalOpen(false)} title={t('modal.open_repo.step1')}><OpenRepoModal onClose={() => setOpenRepoModalOpen(false)} onOpen={(path) => { setSelectedRepoPath(path); setOpenRepoModalOpen(false); setIsInitialSetup(true); setBranchCompareModalOpen(true); }} /></Modal>
       <Modal isOpen={newTaskModalOpen} onClose={() => setNewTaskModalOpen(false)} title={t('modal.new_task.title')}><NewTaskModal onClose={() => setNewTaskModalOpen(false)} onImport={(id) => showNotification(`Task imported: ${id}`)} onCreate={(t) => showNotification(`Task created: ${t.title}`)} /></Modal>
       <Modal isOpen={searchOpen} onClose={() => setSearchOpen(false)} title="Go to File or Command"><CommandPalette onClose={() => setSearchOpen(false)} onNavigate={(target) => { showNotification(`Navigating to ${target}`); setSearchOpen(false); }} /></Modal>
       <Modal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} title={t('modal.settings.title')}><SettingsModal onClose={() => setSettingsOpen(false)} /></Modal>
       <Modal isOpen={reviewModal.isOpen} onClose={() => setReviewModal({ ...reviewModal, isOpen: false })} title="Add Review Comment"><ReviewActionModal type={reviewModal.type} onClose={() => setReviewModal({ ...reviewModal, isOpen: false })} onSubmit={(txt, type) => { showNotification(`${type.toUpperCase()} recorded locally`); setReviewModal({ ...reviewModal, isOpen: false }); }} /></Modal>
-      <Modal isOpen={submitOpen} onClose={() => setSubmitOpen(false)} title={mode === 'remote' ? 'Push Review to Gerrit' : t('modal.submit.title')}><SubmitReviewModal onClose={() => setSubmitOpen(false)} onSubmit={() => { showNotification(mode === 'remote' ? "Gerrit Review Posted!" : "Review Submitted Successfully!"); setSubmitOpen(false); }} /></Modal>
+      <Modal isOpen={submitOpen} onClose={() => setSubmitOpen(false)} title={mode === 'remote' ? 'Push Review to Gerrit' : t('modal.submit.title')}><SubmitReviewModal onClose={() => setSubmitOpen(false)} mode={mode} onSubmit={(action) => { showNotification(mode === 'remote' ? `Gerrit Review Posted (${action})!` : "Review Submitted Successfully!"); setSubmitOpen(false); }} /></Modal>
       <Modal isOpen={tagManagerModalOpen} onClose={() => setTagManagerModalOpen(false)} title={t('modal.tag_manager.title')}><TagManagerModal onClose={() => setTagManagerModalOpen(false)} /></Modal>
       <Modal isOpen={syncStatusModalOpen} onClose={() => setSyncStatusModalOpen(false)} title={t('modal.sync.title')}><SyncStatusModal onClose={() => setSyncStatusModalOpen(false)} /></Modal>
       <Modal isOpen={branchCompareModalOpen} onClose={() => setBranchCompareModalOpen(false)} title={t('modal.branch_compare.title')}><BranchCompareModal currentBase={diffContext.base} currentHead={diffContext.head} isInitialSetup={isInitialSetup} onClose={() => setBranchCompareModalOpen(false)} onApply={(b, h) => { setDiffContext({base:b, head:h}); setIsRepoLoaded(true); setIsInitialSetup(false); setBranchCompareModalOpen(false); }} /></Modal>

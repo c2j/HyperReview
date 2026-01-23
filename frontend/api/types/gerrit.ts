@@ -250,6 +250,15 @@ export enum ImportStage {
 // Core Entity Interfaces
 // ============================================================================
 
+export interface GerritServerConfig {
+  name: string;
+  url: string;
+  username: string;
+  password?: string;
+  token?: string;
+  authType: 'http' | 'token';
+}
+
 /**
  * Gerrit instance configuration
  */

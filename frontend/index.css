@@ -20,6 +20,15 @@
     --font-mono:
         "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
         "Liberation Mono", "Courier New", monospace;
+
+    /* Editor Settings - Font Size */
+    --editor-font-size: 14px;
+
+    /* Editor Settings - Ligatures */
+    --editor-ligatures: normal;
+
+    /* Editor Settings - Cursor Style (for Vim mode) */
+    --editor-cursor: auto;
 }
 
 /* 强制修复 Chrome 86 不认识 rgb(R G B / A) 的问题 */

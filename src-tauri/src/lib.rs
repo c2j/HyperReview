@@ -85,7 +85,7 @@ impl AppState {
 
         // Initialize database
         let db_path = "hyper_review.db";
-        let database = storage::sqlite::Database::new(db_path)
+        let mut database = storage::sqlite::Database::new(db_path)
             .map_err(errors::HyperReviewError::Database)?;
 
          // Initialize schema
@@ -196,15 +196,16 @@ pub fn run() {
             commands::general::delete_gerrit_credentials,
             commands::general::has_gerrit_credentials,
 
-            // Gerrit instance management commands
-            commands::gerrit_test::gerrit_test_connectivity,
-            commands::gerrit_simple::gerrit_get_instances_simple,
-            commands::gerrit_simple::gerrit_create_instance_simple,
-            commands::gerrit_simple::gerrit_delete_instance_simple,
-            commands::gerrit_simple::gerrit_import_change_simple,
-            commands::gerrit_simple::gerrit_search_changes_simple,
-            commands::gerrit_simple::gerrit_clear_all_data_simple,
-            commands::gerrit_simple::gerrit_set_active_instance_simple,
+             // Gerrit instance management commands
+             commands::gerrit_simple::gerrit_get_instances_simple,
+             commands::gerrit_simple::gerrit_create_instance_simple,
+             commands::gerrit_simple::gerrit_delete_instance_simple,
+             commands::gerrit_simple::gerrit_import_change_simple,
+             commands::gerrit_simple::gerrit_search_changes_simple,
+             commands::gerrit_simple::gerrit_get_gerrit_changes_simple,
+             commands::gerrit_simple::gerrit_get_file_content_simple,
+             commands::gerrit_simple::gerrit_clear_all_data_simple,
+             commands::gerrit_simple::gerrit_set_active_instance_simple,
             commands::gerrit_commands::gerrit_get_instances,
             commands::gerrit_commands::gerrit_create_instance,
             commands::gerrit_commands::gerrit_test_connection,

@@ -217,7 +217,7 @@ impl ChangeDownloader {
             self.gerrit_client.get_change(change_number).await?
         } else {
             // For change IDs, we need to search first
-            let search_results = self.gerrit_client.search_changes(&format!("change:{}", change_id)).await?;
+            let search_results = self.gerrit_client.search_changes(&format!("change:{}", change_id), None, None).await?;
             search_results.into_iter().next()
                 .ok_or_else(|| HyperReviewError::other(format!("Change not found: {}", change_id)))?
         };

@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { GitPullRequest, FileText, ChevronRight, Loader2, AlertCircle, RefreshCw, Check, Download, X, CheckCircle, XCircle } from 'lucide-react';
+import { GitPullRequest, FileText, ChevronRight, ChevronDown, Loader2, AlertCircle, RefreshCw, Check, Download, X, CheckCircle, XCircle, FileCode, MoreHorizontal } from 'lucide-react';
 import { simpleGerritService, SimpleChange } from '../services/gerrit-simple-service';
 
 interface GerritChangeListProps {
@@ -19,6 +19,9 @@ const GerritChangeList: React.FC<GerritChangeListProps> = ({ onSelectChange, onC
   const [selectedChanges, setSelectedChanges] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState('');
   const [importMessage, setImportMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [expandedChanges, setExpandedChanges] = useState<Set<string>>(new Set());
+  const [serverOffset, setServerOffset] = useState(0);
+  const serverLimit = 25;
 
   const loadChanges = async () => {
     setLoading(true);
@@ -36,15 +39,23 @@ const GerritChangeList: React.FC<GerritChangeListProps> = ({ onSelectChange, onC
     }
   };
 
-  const loadServerChanges = async (query: string = '') => {
+  const loadServerChanges = async (query: string = '', isRefresh: boolean = true) => {
     setLoadingServer(true);
     setError(null);
 
     try {
-      console.log('GerritChangeList: Loading server changes with query:', query);
-      const results = await simpleGerritService.searchChanges(query);
+      console.log('GerritChangeList: Loading server changes with query:', query, 'offset:', isRefresh ? 0 : serverOffset);
+      const results = await simpleGerritService.searchChanges(query, isRefresh ? 0 : serverOffset, serverLimit);
       console.log('GerritChangeList: Loaded server changes:', results.length);
-      setServerChanges(results);
+
+      if (isRefresh) {
+        setServerChanges(results);
+        setServerOffset(serverLimit);
+      } else {
+        setServerChanges(prev => [...prev, ...results]);
+        setServerOffset(serverOffset + serverLimit);
+      }
+
       setShowServerChanges(true);
     } catch (err) {
       console.error('GerritChangeList: Failed to load server changes:', err);
@@ -59,12 +70,13 @@ const GerritChangeList: React.FC<GerritChangeListProps> = ({ onSelectChange, onC
   };
 
   const handleRefreshServer = async () => {
-    await loadServerChanges(searchQuery);
+    await loadServerChanges(searchQuery, true);
   };
 
   const handleSearch = async () => {
     console.log('GerritChangeList: Search button clicked with query:', searchQuery);
-    await loadServerChanges(searchQuery);
+    setServerOffset(0);
+    await loadServerChanges(searchQuery, true);
   };
 
   const toggleChangeSelection = (changeId: string) => {
@@ -164,6 +176,21 @@ const GerritChangeList: React.FC<GerritChangeListProps> = ({ onSelectChange, onC
     onSelectChange(change);
     onClose();
   };
+
+  const toggleChangeExpansion = (changeId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setExpandedChanges(prev => {
+      const next = new Set(prev);
+      if (next.has(changeId)) {
+        next.delete(changeId);
+      } else {
+        next.add(changeId);
+      }
+      return next;
+    });
+  };
+
+  const isExpanded = (changeId: string) => expandedChanges.has(changeId);
 
   const handleLoadServerChanges = async () => {
     await loadServerChanges();
@@ -375,7 +402,23 @@ const GerritChangeList: React.FC<GerritChangeListProps> = ({ onSelectChange, onC
                     </div>
                   </div>
                 </div>
-              ))}
+               ))}
+              {filteredServerChanges.length >= serverLimit && (
+                <button
+                  onClick={() => loadServerChanges(searchQuery, false)}
+                  disabled={loadingServer}
+                  className="w-full py-4 text-[10px] font-bold text-gray-500 hover:text-purple-400 hover:bg-editor-line/30 transition-all flex items-center justify-center gap-2 group"
+                >
+                  {loadingServer ? (
+                    <Loader2 size={12} className="animate-spin" />
+                  ) : (
+                    <>
+                      <MoreHorizontal size={14} className="group-hover:scale-110 transition-transform" />
+                      <span>Load more</span>
+                    </>
+                  )}
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -488,51 +531,99 @@ const GerritChangeList: React.FC<GerritChangeListProps> = ({ onSelectChange, onC
       )}
 
       <div className="flex-1 overflow-y-auto px-4 py-3">
-        {changes.map(change => (
-          <button
-            key={change.id}
-            onClick={() => handleSelectChange(change)}
-            className="text-left p-4 rounded border border-editor-line/50 hover:bg-editor-line hover:border-editor-accent transition-all mb-2 w-full"
-          >
-            <div className="flex items-start gap-3">
-              <div className="flex-1 min-w-0">
-                <div className="text-xs text-gray-500 mb-1">
-                  #{change.change_number}
+        {changes.map(change => {
+          const expanded = isExpanded(change.id);
+          return (
+            <div key={change.id} className="mb-2">
+              <button
+                onClick={() => handleSelectChange(change)}
+                className="text-left p-4 rounded border border-editor-line/50 hover:bg-editor-line hover:border-editor-accent transition-all w-full"
+              >
+                <div className="flex items-start gap-3">
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs text-gray-500 mb-1">
+                      #{change.change_number}
+                    </div>
+                    <div className={`text-sm font-medium mb-1 ${getStatusColor(change.status)}`}>
+                      {change.subject}
+                    </div>
+                    <div className="flex items-center gap-2 text-[10px] text-gray-500">
+                      <span>{change.project}</span>
+                      {' • '}
+                      <span>{change.owner}</span>
+                    </div>
+                  </div>
+                  <div className="flex-shrink-0">
+                    <FileText size={16} className="text-gray-500 flex-shrink-0" />
+                  </div>
+                  <div className="flex flex-col items-end gap-3">
+                    <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(change.status)}`}>
+                      {change.status}
+                    </span>
+                    <span className="text-xs text-gray-500">
+                      {formatDate(change.updated)}
+                    </span>
+                  </div>
                 </div>
-                <div className={`text-sm font-medium mb-1 ${getStatusColor(change.status)}`}>
-                  {change.subject}
+                <div className="flex items-center gap-3 text-[10px] text-gray-500">
+                  <div className="flex items-center gap-2">
+                    {change.insertions > 0 && (
+                      <span className="text-green-500">+{change.insertions}</span>
+                    )}
+                    {change.deletions > 0 && (
+                      <span className="text-red-500">-{change.deletions}</span>
+                    )}
+                  </div>
+                  <button
+                    onClick={(e) => toggleChangeExpansion(change.id, e)}
+                    className="p-1 hover:bg-editor-line/40 rounded transition-colors"
+                    title={expanded ? "Collapse files" : "Expand files"}
+                  >
+                    {expanded ? <ChevronDown size={16} className="text-purple-400" /> : <ChevronRight size={16} className="text-gray-500 flex-shrink-0" />}
+                  </button>
                 </div>
-                <div className="flex items-center gap-2 text-[10px] text-gray-500">
-                  <span>{change.project}</span>
-                  {' • '}
-                  <span>{change.owner}</span>
+              </button>
+
+              {expanded && (
+                <div className="mt-2 ml-4 p-3 bg-editor-line/20 border border-editor-line/50 rounded-lg">
+                  <div className="text-xs text-gray-500 mb-2 font-medium">
+                    {change.files?.length || 0} file{change.files?.length !== 1 ? 's' : ''}
+                  </div>
+                  {change.files && change.files.length > 0 ? (
+                    <div className="space-y-1">
+                      {change.files.map((file, index) => (
+                        <div
+                          key={`${change.id}-file-${index}`}
+                          className="flex items-center gap-2 px-3 py-2 bg-editor-bg/40 border border-editor-line/40 rounded hover:bg-editor-line/60 hover:border-purple-500/30 transition-colors group"
+                        >
+                          <FileCode size={12} className="text-gray-500 group-hover:text-purple-300" />
+                          <span className="flex-1 text-xs font-mono text-gray-400 truncate">
+                            {file.path}
+                          </span>
+                          <span className="text-[10px] text-gray-500">
+                            {file.change_type}
+                          </span>
+                          <div className="flex items-center gap-2 text-[10px]">
+                            {file.insertions > 0 && (
+                              <span className="text-green-500">+{file.insertions}</span>
+                            )}
+                            {file.deletions > 0 && (
+                              <span className="text-red-500">-{file.deletions}</span>
+                            )}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="text-center py-4 text-xs text-gray-500">
+                      No files in this change
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div className="flex-shrink-0">
-                <FileText size={16} className="text-gray-500 flex-shrink-0" />
-              </div>
-              <div className="flex flex-col items-end gap-3">
-                <span className={`px-2 py-1 rounded text-xs font-medium ${getStatusColor(change.status)}`}>
-                  {change.status}
-                </span>
-                <span className="text-xs text-gray-500">
-                  {formatDate(change.updated)}
-                </span>
-              </div>
+              )}
             </div>
-            <div className="flex items-center gap-3 text-[10px] text-gray-500">
-              <div className="flex items-center gap-2">
-                {change.insertions > 0 && (
-                  <span className="text-green-500">+{change.insertions}</span>
-                )}
-                {change.deletions > 0 && (
-                  <span className="text-red-500">-{change.deletions}</span>
-                )}
-              </div>
-              <ChevronRight size={16} className="text-gray-500 flex-shrink-0" />
-            </div>
-          </button>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

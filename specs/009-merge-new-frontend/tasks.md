@@ -132,7 +132,7 @@ Establish the foundational components and state management needed for Local/Remo
 - [ ] T027 [US1] Refactor existing ToolBar.tsx to use mode context and conditionally render LocalToolBar or RemoteToolBar
   File: `frontend/src/components/ToolBar.tsx`
 
-- [ ] T028 [US1] Refactor existing TaskTree.tsx to use mode context and conditionally render LocalTaskTree or RemoteTaskTree
+- [X] T028 [US1] Refactor existing TaskTree.tsx to use mode context and conditionally render LocalTaskTree or RemoteTaskTree
   File: `frontend/src/components/TaskTree.tsx`
 
 - [ ] T029 [US1] Refactor existing RightPanel.tsx to use mode context and conditionally render LocalRightPanel or RemoteRightPanel

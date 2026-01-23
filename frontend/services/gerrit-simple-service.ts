@@ -247,9 +247,9 @@ export class SimpleGerritService {
     }
   }
 
-  async searchChanges(query: string): Promise<SimpleChange[]> {
+  async searchChanges(query: string, offset?: number, limit?: number): Promise<SimpleChange[]> {
     try {
-      console.log('SimpleGerritService: Searching changes with query:', query);
+      console.log('SimpleGerritService: Searching changes with query:', query, 'offset:', offset, 'limit:', limit);
       console.log('SimpleGerritService: Test mode:', this.testMode);
 
       if (this.testMode) {
@@ -290,7 +290,11 @@ export class SimpleGerritService {
         return changes;
       }
 
-      const changes = await invoke<SimpleChange[]>('gerrit_search_changes_simple', { query });
+      const changes = await invoke<SimpleChange[]>('gerrit_search_changes_simple', {
+        query,
+        offset: offset || undefined,
+        limit: limit || undefined
+      });
       console.log('SimpleGerritService: Search results:', changes);
       return changes;
     } catch (error) {

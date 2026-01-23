@@ -5,7 +5,11 @@ import { useApiClient } from '../api/client';
 import { useReviewStore } from '../store/reviewStore';
 import type { ReviewStats } from '../api/types';
 
-const StatusBar: React.FC = () => {
+interface StatusBarProps {
+  mode?: 'local' | 'remote';
+}
+
+const StatusBar: React.FC<StatusBarProps> = ({ mode = 'local' }) => {
   const { t } = useTranslation();
   const { getReviewStats } = useApiClient();
   const { currentRepo } = useReviewStore();
@@ -18,7 +22,7 @@ const StatusBar: React.FC = () => {
   }, [currentRepo, getReviewStats]);
 
   return (
-    <div className="h-[28px] bg-editor-accent text-white flex items-center px-4 justify-between text-[11px] select-none shrink-0 z-50 overflow-hidden whitespace-nowrap">
+    <div className={`h-[28px] text-white flex items-center px-4 justify-between text-[11px] select-none shrink-0 z-50 overflow-hidden whitespace-nowrap ${mode === 'remote' ? 'bg-purple-900' : 'bg-editor-accent'}`}>
       {/* Left Section: Flexible, truncates path first */}
       <div className="flex items-center gap-4 min-w-0 flex-1 mr-4">
         <span className="font-bold flex items-center gap-1 shrink-0">

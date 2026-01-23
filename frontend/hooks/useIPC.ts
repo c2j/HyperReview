@@ -209,6 +209,16 @@ export const useCreateTag = () => {
   return useIPC<{ label: string; color: string }, any>('create_tag');
 };
 
+export const useGetGerritChanges = () => {
+  return useIPC<{ offset?: number; limit?: number }, any[]>('gerrit_get_gerrit_changes_simple');
+};
+
+export const useGetGerritFileContent = () => {
+  return useIPC<{ changeId: string; patchSetNumber: number; filePath: string }, string>(
+    'gerrit_get_file_content_simple',
+  );
+};
+
 // Credential management hooks
 export const useStoreGerritCredentials = () => {
   return useIPC<{ username: string; password: string }, void>('store_gerrit_credentials');
@@ -224,4 +234,16 @@ export const useDeleteGerritCredentials = () => {
 
 export const useHasGerritCredentials = () => {
   return useIPC<{ username: string }, boolean>('has_gerrit_credentials');
+};
+
+export const useGetGerritConfig = () => {
+  return useIPC<{}, any>('get_gerrit_config');
+};
+
+export const useSaveGerritConfig = () => {
+  return useIPC<{ url: string; username: string; password?: string }, void>('save_gerrit_config');
+};
+
+export const useTestGerritConnection = () => {
+  return useIPC<{ url: string; username: string; password?: string }, boolean>('test_gerrit_connection');
 };

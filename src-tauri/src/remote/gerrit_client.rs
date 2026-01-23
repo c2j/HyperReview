@@ -7,7 +7,6 @@ use reqwest::Client;
 use serde_json::Value;
 use serde::{Serialize, Deserialize};
 use log::{info, error};
-use rand::Rng;
 use std::collections::HashMap;
 
 use crate::models::{SubmitResult, Comment};
@@ -70,20 +69,13 @@ impl GerritClient {
         self
     }
 
-    fn calculate_backoff_delay(&self, attempt: u32) -> Duration {
-        let base_delay = self.retry_config.base_delay_ms;
-        let exponential_delay = (base_delay as f64) * self.retry_config.backoff_multiplier.powi(attempt as i32);
-
-        let max_delay = self.retry_config.max_delay_ms;
-        let capped_delay = (exponential_delay as u64).min(max_delay);
-
-        let jitter_range = (capped_delay as f64) * self.retry_config.jitter_factor;
-        let jitter = rand::thread_rng().gen_range(-jitter_range..=jitter_range);
-
-        let final_delay = (capped_delay as f64) + jitter;
-        let final_delay_ms = final_delay.max(0.0) as u64;
-
-        Duration::from_millis(final_delay_ms)
+    fn get_api_url(&self, path: &str) -> String {
+        let prefix = if self.username.is_some() && self.http_password.is_some() {
+            "/a"
+        } else {
+            ""
+        };
+        format!("{}{}{}", self.base_url, prefix, path)
     }
 
     pub async fn test_connection(&self) -> Result<ConnectionTestResult, HyperReviewError> {
@@ -143,16 +135,14 @@ impl GerritClient {
     ) -> Result<GerritChangeInfo, HyperReviewError> {
         info!("Getting Gerrit change #{}", change_number);
 
-        let base_url = self.base_url.clone();
+        let url = self.get_api_url(&format!(
+            "/changes/{}?o=CURRENT_REVISION&o=DETAILED_ACCOUNTS&o=DETAILED_LABELS",
+            change_number
+        ));
         let username = self.username.clone();
         let password = self.http_password.clone();
 
         let result = tokio::task::spawn_blocking(move || {
-            let url = format!(
-                "{}/a/changes/{}?o=CURRENT_REVISION&o=DETAILED_ACCOUNTS&o=DETAILED_LABELS",
-                base_url, change_number
-            );
-
             info!("GET to Gerrit: {}", url);
 
             let client = reqwest::blocking::Client::new();
@@ -235,15 +225,11 @@ impl GerritClient {
     ) -> Result<std::collections::HashMap<String, GerritFileInfo>, HyperReviewError> {
         info!("Getting files for change {} revision {}", change_id, revision_id);
         
-        let base_url = self.base_url.clone();
-        let change_id = change_id.to_string();
-        let revision_id = revision_id.to_string();
+        let url = self.get_api_url(&format!("/changes/{}/revisions/{}/files/", change_id, revision_id));
         let username = self.username.clone();
         let password = self.http_password.clone();
         
         let result = tokio::task::spawn_blocking(move || {
-            let url = format!("{}/a/changes/{}/revisions/{}/files/", base_url, change_id, revision_id);
-            
             let client = reqwest::blocking::Client::new();
             let mut request = client.get(&url);
             
@@ -280,18 +266,13 @@ impl GerritClient {
     ) -> Result<String, HyperReviewError> {
         info!("Getting content for file {} in change {} revision {}", file_path, change_id, revision_id);
         
-        let base_url = self.base_url.clone();
-        let change_id = change_id.to_string();
-        let revision_id = revision_id.to_string();
-        let file_path = file_path.to_string();
+        let encoded_path = urlencoding::encode(file_path);
+        let url = self.get_api_url(&format!("/changes/{}/revisions/{}/files/{}/content", 
+            change_id, revision_id, encoded_path));
         let username = self.username.clone();
         let password = self.http_password.clone();
         
         let result = tokio::task::spawn_blocking(move || {
-            let encoded_path = urlencoding::encode(&file_path);
-            let url = format!("{}/a/changes/{}/revisions/{}/files/{}/content", 
-                             base_url, change_id, revision_id, encoded_path);
-            
             let client = reqwest::blocking::Client::new();
             let mut request = client.get(&url);
             
@@ -334,24 +315,19 @@ impl GerritClient {
     ) -> Result<String, HyperReviewError> {
         info!("Getting diff for file {} in change {} revision {}", file_path, change_id, revision_id);
         
-        let base_url = self.base_url.clone();
-        let change_id = change_id.to_string();
-        let revision_id = revision_id.to_string();
+        let encoded_path = urlencoding::encode(file_path);
+        let mut path = format!("/changes/{}/revisions/{}/files/{}/diff", 
+            change_id, revision_id, encoded_path);
+        if let Some(base) = base_revision {
+            path.push_str(&format!("?base={}", base));
+        }
+        let url = self.get_api_url(&path);
+        
         let file_path = file_path.to_string();
-        let base_revision = base_revision.map(|s| s.to_string());
         let username = self.username.clone();
         let password = self.http_password.clone();
         
         let result = tokio::task::spawn_blocking(move || {
-            let encoded_path = urlencoding::encode(&file_path);
-            let mut url = format!("{}/a/changes/{}/revisions/{}/files/{}/diff", 
-                                 base_url, change_id, revision_id, encoded_path);
-            
-            // Add base revision parameter if specified
-            if let Some(base) = base_revision {
-                url.push_str(&format!("?base={}", base));
-            }
-            
             let client = reqwest::blocking::Client::new();
             let mut request = client.get(&url);
             
@@ -420,7 +396,7 @@ impl GerritClient {
     pub async fn get_comments(&self, change_id: &str) -> Result<Vec<Comment>, HyperReviewError> {
         info!("Getting comments for change: {}", change_id);
         
-        let url = format!("{}/a/changes/{}/comments", self.base_url, change_id);
+        let url = self.get_api_url(&format!("/changes/{}/comments", change_id));
         
         let username = self.username.clone();
         let password = self.http_password.clone();
@@ -454,11 +430,23 @@ impl GerritClient {
     }
     
     /// Search for changes
-    pub async fn search_changes(&self, query: &str) -> Result<Vec<GerritChangeInfo>, HyperReviewError> {
-        info!("Searching changes with query: {}", query);
-        
+    /// offset: Starting index for pagination (0-based, Gerrit API uses 'S' parameter)
+    /// limit: Maximum number of results to return (Gerrit API uses 'n' parameter)
+    pub async fn search_changes(&self, query: &str, offset: Option<u32>, limit: Option<u32>) -> Result<Vec<GerritChangeInfo>, HyperReviewError> {
+        info!("Searching changes with query: {}, offset: {:?}, limit: {:?}", query, offset, limit);
+
         let encoded_query = urlencoding::encode(query);
-        let url = format!("{}/a/changes/?q={}&o=CURRENT_REVISION", self.base_url, encoded_query);
+        let mut url_path = format!("/changes/?q={}&o=CURRENT_REVISION", encoded_query);
+
+        // Add pagination parameters if provided
+        if let Some(start) = offset {
+            url_path.push_str(&format!("&S={}", start));
+        }
+        if let Some(max_results) = limit {
+            url_path.push_str(&format!("&n={}", max_results));
+        }
+
+        let url = self.get_api_url(&url_path);
         
         let username = self.username.clone();
         let password = self.http_password.clone();
@@ -495,7 +483,7 @@ impl GerritClient {
     pub async fn submit_review(&self, change_id: &str, review: &ReviewInput) -> Result<(), HyperReviewError> {
         info!("Submitting review for change: {}", change_id);
         
-        let url = format!("{}/a/changes/{}/revisions/current/review", self.base_url, change_id);
+        let url = self.get_api_url(&format!("/changes/{}/revisions/current/review", change_id));
         let review_json = serde_json::to_string(review)?;
         
         let username = self.username.clone();

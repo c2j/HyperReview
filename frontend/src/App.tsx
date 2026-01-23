@@ -1,13 +1,13 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
 import TitleBar from './components/TitleBar';
-import LocalToolBar from './components/toolbars/LocalToolBar';
-import RemoteToolBar from './components/toolbars/RemoteToolBar';
-import LocalTaskTree from './components/task-trees/LocalTaskTree';
-import RemoteTaskTree from './components/task-trees/RemoteTaskTree';
+import LocalToolBar from './components/LocalToolBar';
+import RemoteToolBar from './components/RemoteToolBar';
+import LocalTaskTree from './components/LocalTaskTree';
+import RemoteTaskTree from './components/RemoteTaskTree';
 import DiffView from './components/DiffView';
-import LocalRightPanel from './components/panels/LocalRightPanel';
-import RemoteRightPanel from './components/panels/RemoteRightPanel';
+import LocalRightPanel from './components/LocalRightPanel';
+import RemoteRightPanel from './components/RemoteRightPanel';
 import ActionBar from './components/ActionBar';
 import StatusBar from './components/StatusBar';
 import WelcomeView from './components/WelcomeView';
@@ -27,10 +27,10 @@ import GerritInstanceSelector from './components/GerritInstanceSelector';
 import TourGuide from './components/TourGuide';
 import { useTranslation } from './i18n';
 import { getGerritConfig } from './api/client';
-import { simpleGerritService, SimpleChange } from './services/gerrit-simple-service';
+import { simpleGerritService } from '../../services/gerrit-simple-service';
 
 const App: React.FC = () => {
-  const { t, fontSize, ligatures, vimMode } = useTranslation();
+  const { t, fontSize, ligatures, vimMode, language } = useTranslation();
   const [activeTaskId, setActiveTaskId] = useState('1');
   const [notification, setNotification] = useState<string | null>(null);
   const [mode, setMode] = useState<'local' | 'remote'>('local');
@@ -38,32 +38,7 @@ const App: React.FC = () => {
 
   const [isRepoLoaded, setIsRepoLoaded] = useState(false);
   const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
-  const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [diffContext, setDiffContext] = useState({ base: 'master', head: 'feature/payment-retry' });
-
-  const handleSelectFile = (file: string | null) => {
-    setSelectedFile(file);
-    if (file) {
-      setActiveFilePath(file);
-    }
-  };
-
-  const handleGerritImport = (change: SimpleChange) => {
-    setGerritImportOpen(false);
-    setActiveTaskId(`gerrit-${change.change_number}`);
-    setIsRepoLoaded(true);
-    setMode('remote');
-    showNotification(`Gerrit Change #${change.change_number} Imported Successfully`);
-  };
-
-  const startGerritFlow = async () => {
-      const instances = await simpleGerritService.getInstances();
-      if (instances.length === 0) {
-          setGerritServerOpen(true);
-      } else {
-          setGerritInstanceSelectorOpen(true);
-      }
-  };
 
   const [activeFilePath, setActiveFilePath] = useState('src/main/OrderService.java');
   
@@ -137,7 +112,22 @@ const App: React.FC = () => {
       showNotification(`Switched to ${newMode.toUpperCase()} mode`); 
   };
   
+  const handleGerritImport = (id: string) => { 
+      setGerritImportOpen(false); 
+      setActiveTaskId(`gerrit-${id}`); 
+      setIsRepoLoaded(true); 
+      setMode('remote');
+      showNotification(`Gerrit Change #${id} Imported Successfully`); 
+  };
 
+  const startGerritFlow = async () => {
+      const instances = await simpleGerritService.getInstances();
+      if (instances.length === 0) {
+          setGerritServerOpen(true);
+      } else {
+          setGerritInstanceSelectorOpen(true);
+      }
+  };
 
   const handleAction = (msg: string) => {
     if (msg === "Global Search Activated") { setSearchOpen(true); return; }
@@ -176,22 +166,22 @@ const App: React.FC = () => {
           <WelcomeView 
             onOpenLocal={() => setOpenRepoModalOpen(true)} 
             onImportRemote={startGerritFlow} 
-             isGerritConfigured={isGerritConfigured}
-             onSelectHistory={(path, m) => {
-                 setSelectedFile(path);
-                 setMode(m);
-                 setIsRepoLoaded(true);
-                 showNotification(`Loaded ${path}`);
-             }}
+            isGerritConfigured={isGerritConfigured}
+            onSelectHistory={(path, m) => {
+                setSelectedRepoPath(path);
+                setMode(m);
+                setIsRepoLoaded(true);
+                showNotification(`Loaded ${path}`);
+            }}
           />
       ) : (
           <div className="flex-1 flex overflow-hidden relative pb-[28px]"> 
             {showLeft && (
               <div style={{ width: leftWidth }} className="shrink-0 h-full flex flex-col transition-all duration-300">
-                 {mode === 'remote' ? (
+                {mode === 'remote' ? (
                     <RemoteTaskTree activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} onAction={handleAction} />
                 ) : (
-                    <LocalTaskTree activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} onAction={handleAction} onSelectFile={handleSelectFile} selectedFile={selectedFile} />
+                    <LocalTaskTree activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} onAction={handleAction} />
                 )}
               </div>
             )}
@@ -237,13 +227,13 @@ const App: React.FC = () => {
             }}
         />
       </Modal>
-      <Modal isOpen={gerritImportOpen} onClose={() => setGerritImportOpen(false)} title="Import from Gerrit"><GerritImportModal onClose={() => setGerritImportOpen(false)} onImport={handleGerritImport} /></Modal>
+      <Modal isOpen={gerritImportOpen} onClose={() => setGerritImportOpen(false)} title="Import from Gerrit"><GerritImportModal onClose={() => setGerritImportOpen(false)} onImport={handleGerritImport} onOpenSettings={() => { setGerritImportOpen(false); setGerritServerOpen(true); }} /></Modal>
       <Modal isOpen={openRepoModalOpen} onClose={() => setOpenRepoModalOpen(false)} title={t('modal.open_repo.step1')}><OpenRepoModal onClose={() => setOpenRepoModalOpen(false)} onOpen={(path) => { setSelectedRepoPath(path); setOpenRepoModalOpen(false); setIsInitialSetup(true); setBranchCompareModalOpen(true); }} /></Modal>
       <Modal isOpen={newTaskModalOpen} onClose={() => setNewTaskModalOpen(false)} title={t('modal.new_task.title')}><NewTaskModal onClose={() => setNewTaskModalOpen(false)} onImport={(id) => showNotification(`Task imported: ${id}`)} onCreate={(t) => showNotification(`Task created: ${t.title}`)} /></Modal>
       <Modal isOpen={searchOpen} onClose={() => setSearchOpen(false)} title="Go to File or Command"><CommandPalette onClose={() => setSearchOpen(false)} onNavigate={(target) => { showNotification(`Navigating to ${target}`); setSearchOpen(false); }} /></Modal>
       <Modal isOpen={settingsOpen} onClose={() => setSettingsOpen(false)} title={t('modal.settings.title')}><SettingsModal onClose={() => setSettingsOpen(false)} /></Modal>
       <Modal isOpen={reviewModal.isOpen} onClose={() => setReviewModal({ ...reviewModal, isOpen: false })} title="Add Review Comment"><ReviewActionModal type={reviewModal.type} onClose={() => setReviewModal({ ...reviewModal, isOpen: false })} onSubmit={(txt, type) => { showNotification(`${type.toUpperCase()} recorded locally`); setReviewModal({ ...reviewModal, isOpen: false }); }} /></Modal>
-      <Modal isOpen={submitOpen} onClose={() => setSubmitOpen(false)} title={mode === 'remote' ? 'Push Review to Gerrit' : t('modal.submit.title')}><SubmitReviewModal onClose={() => setSubmitOpen(false)} onSubmit={() => { showNotification(mode === 'remote' ? "Gerrit Review Posted!" : "Review Submitted Successfully!"); setSubmitOpen(false); }} /></Modal>
+      <Modal isOpen={submitOpen} onClose={() => setSubmitOpen(false)} title={mode === 'remote' ? 'Push Review to Gerrit' : t('modal.submit.title')}><SubmitReviewModal onClose={() => setSubmitOpen(false)} mode={mode} onSubmit={(action) => { showNotification(mode === 'remote' ? `Gerrit Review Posted (${action})!` : "Review Submitted Successfully!"); setSubmitOpen(false); }} /></Modal>
       <Modal isOpen={tagManagerModalOpen} onClose={() => setTagManagerModalOpen(false)} title={t('modal.tag_manager.title')}><TagManagerModal onClose={() => setTagManagerModalOpen(false)} /></Modal>
       <Modal isOpen={syncStatusModalOpen} onClose={() => setSyncStatusModalOpen(false)} title={t('modal.sync.title')}><SyncStatusModal onClose={() => setSyncStatusModalOpen(false)} /></Modal>
       <Modal isOpen={branchCompareModalOpen} onClose={() => setBranchCompareModalOpen(false)} title={t('modal.branch_compare.title')}><BranchCompareModal currentBase={diffContext.base} currentHead={diffContext.head} isInitialSetup={isInitialSetup} onClose={() => setBranchCompareModalOpen(false)} onApply={(b, h) => { setDiffContext({base:b, head:h}); setIsRepoLoaded(true); setIsInitialSetup(false); setBranchCompareModalOpen(false); }} /></Modal>
@@ -252,4 +242,5 @@ const App: React.FC = () => {
     </div>
   );
 };
+
 export default App;

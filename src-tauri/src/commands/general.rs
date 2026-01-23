@@ -521,7 +521,7 @@ pub async fn submit_review(
     log::info!("Submitting review to system: {}", system);
 
     // Get comments from database for this review
-    let database = state.database.lock().unwrap();
+    let _database = state.database.lock().unwrap();
 
     // Parse review data
     let project_id = review_data.get("project_id")
@@ -551,7 +551,7 @@ pub async fn sync_repo(state: State<'_, AppState>) -> Result<SyncResult, String>
     log::info!("Syncing repository with remote");
 
     let git_service = state.git_service.lock().unwrap();
-    let repo_path = git_service.get_current_path()
+    let _repo_path = git_service.get_current_path()
         .ok_or_else(|| "No repository loaded".to_string())?;
 
     // In production, would run git fetch/pull
@@ -1154,4 +1154,108 @@ pub async fn get_complete_file_diff(
 
     log::info!("Complete diff computed successfully: {} lines", diff_lines.len());
     Ok(diff_lines)
+}
+
+/// Gets Gerrit changes from active instance (DEPRECATED - use gerrit_get_gerrit_changes_simple from gerrit_simple)
+#[tauri::command]
+pub async fn get_gerrit_changes(state: State<'_, AppState>) -> Result<Vec<crate::models::gerrit::GerritChange>, String> {
+    log::info!("Fetching Gerrit changes from active instance");
+
+    let database = state.database.lock().unwrap();
+
+    // Get active Gerrit instance
+    let active_instance = match database.get_all_gerrit_instances() {
+        Ok(instances) => instances.into_iter().find(|i| i.is_active),
+        Err(e) => {
+            log::error!("Failed to get Gerrit instances: {}", e);
+            return Err(format!("Failed to get Gerrit instances: {}", e));
+        }
+    };
+
+    let instance = match active_instance {
+        Some(inst) => inst,
+        None => {
+            log::warn!("No active Gerrit instance found");
+            return Err("No active Gerrit instance configured. Please configure a Gerrit server first.".to_string());
+        }
+    };
+
+    log::info!("Fetching changes from Gerrit instance: {} ({})", instance.name, instance.url);
+
+    // Create Gerrit client
+    let mut gerrit_client = crate::remote::gerrit_client::GerritClient::new(&instance.url);
+
+    // Fetch changes from Gerrit server
+    match gerrit_client.search_changes("status:open", None, None).await {
+        Ok(gerrit_change_infos) => {
+            log::info!("Successfully fetched {} changes from Gerrit", gerrit_change_infos.len());
+
+            let mut gerrit_changes = Vec::new();
+
+            // Store changes in database for offline access
+            for gerrit_change_info in &gerrit_change_infos {
+                let now = chrono::Utc::now().to_rfc3339();
+                let internal_change = crate::models::gerrit::GerritChange {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    change_id: gerrit_change_info.change_id.clone(),
+                    instance_id: instance.id.clone(),
+                    project: gerrit_change_info.project.clone(),
+                    branch: gerrit_change_info.branch.clone(),
+                    subject: gerrit_change_info.subject.clone(),
+                    status: crate::models::gerrit::ChangeStatus::from_string(&gerrit_change_info.status),
+                    owner: crate::models::gerrit::GerritUser {
+                        account_id: 0,
+                        name: "Unknown".to_string(),
+                        email: "unknown@example.com".to_string(),
+                        username: None,
+                        avatar_url: None,
+                    },
+                    created: gerrit_change_info.created.clone(),
+                    updated: gerrit_change_info.updated.clone(),
+                    insertions: gerrit_change_info.insertions.unwrap_or(0) as u32,
+                    deletions: gerrit_change_info.deletions.unwrap_or(0) as u32,
+                    current_revision: gerrit_change_info.current_revision.clone().unwrap_or_default(),
+                    current_patch_set_num: gerrit_change_info._number as u32,
+                    patch_sets: Vec::new(),
+                    files: Vec::new(),
+                    total_files: 0,
+                    reviewed_files: 0,
+                    local_comments: 0,
+                    remote_comments: 0,
+                    import_status: crate::models::gerrit::ImportStatus::Imported,
+                    last_sync: Some(now.clone()),
+                    conflict_status: crate::models::gerrit::ConflictStatus::None,
+                    metadata: std::collections::HashMap::new(),
+                };
+
+                if let Err(e) = database.store_gerrit_change(&internal_change) {
+                    log::warn!("Failed to store Gerrit change in database: {}", e);
+                }
+
+                gerrit_changes.push(internal_change);
+            }
+
+            Ok(gerrit_changes)
+        },
+        Err(e) => {
+            log::error!("Failed to fetch changes from Gerrit: {}", e);
+
+            // Fallback to cached data from database
+            log::info!("Falling back to cached changes from database");
+            match database.get_gerrit_changes_for_instance(&instance.id) {
+                Ok(cached_changes) => {
+                    if cached_changes.is_empty() {
+                        log::warn!("No cached changes found in database");
+                        return Err(format!("Failed to fetch from Gerrit and no cached data available. Error: {}", e));
+                    }
+                    log::info!("Returning {} cached changes from database", cached_changes.len());
+                    Ok(cached_changes)
+                },
+                Err(db_err) => {
+                    log::error!("Failed to get cached changes from database: {}", db_err);
+                    Err(format!("Gerrit fetch failed and cache retrieval also failed. Error: {}", e))
+                }
+            }
+        }
+    }
 }

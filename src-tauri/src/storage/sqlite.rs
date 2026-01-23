@@ -1,13 +1,16 @@
 // SQLite database operations
 // Local storage for review metadata
 
-use crate::models::{Repo, Comment, CommentStatus};
-use crate::models::gerrit::{GerritInstance, GerritChange, ConnectionStatus, ChangeStatus, ImportStatus, ConflictStatus};
 use crate::errors::HyperReviewError;
-use rusqlite::{Connection, Result, params};
+use crate::models::gerrit::{
+    ChangeStatus, ConflictStatus, ConnectionStatus, GerritChange, GerritInstance, ImportStatus,
+};
+use crate::models::{Comment, CommentStatus, Repo};
+use crate::storage::migrations::MigrationRunner;
+use chrono::Utc;
+use rusqlite::{params, Connection, Result};
 use serde_json;
 use uuid::Uuid;
-use chrono::Utc;
 
 pub struct Database {
     conn: Connection,
@@ -206,7 +209,7 @@ impl Database {
             log::info!("Adding review_status column to local_task_files table");
             self.conn.execute(
                 "ALTER TABLE local_task_files ADD COLUMN review_status TEXT",
-                []
+                [],
             )?;
         }
 
@@ -214,7 +217,7 @@ impl Database {
             log::info!("Adding review_comment column to local_task_files table");
             self.conn.execute(
                 "ALTER TABLE local_task_files ADD COLUMN review_comment TEXT",
-                []
+                [],
             )?;
         }
 
@@ -253,7 +256,7 @@ impl Database {
             "SELECT path, current_branch, last_opened, head_commit, remote_url, is_active
              FROM repos
              ORDER BY last_opened DESC
-             LIMIT ?1"
+             LIMIT ?1",
         )?;
 
         let repo_iter = stmt.query_map([limit], |row| {
@@ -374,7 +377,8 @@ impl Database {
                     _ => CommentStatus::Draft,
                 },
                 parent_id: row.get("parent_id")?,
-                tags: row.get::<_, String>("tags")?
+                tags: row
+                    .get::<_, String>("tags")?
                     .split(',')
                     .filter(|s| !s.is_empty())
                     .map(String::from)
@@ -411,7 +415,8 @@ impl Database {
     pub fn delete_comment(&self, comment_id: &str) -> Result<(), rusqlite::Error> {
         log::info!("Deleting comment: {}", comment_id);
 
-        self.conn.execute("DELETE FROM comments WHERE id = ?1", [comment_id])?;
+        self.conn
+            .execute("DELETE FROM comments WHERE id = ?1", [comment_id])?;
 
         Ok(())
     }
@@ -432,7 +437,8 @@ impl Database {
     pub fn store_task(&self, task: &crate::models::Task) -> Result<(), rusqlite::Error> {
         log::info!("Storing task: {}", task.id);
 
-        let metadata_json = serde_json::to_string(&task.metadata).unwrap_or_else(|_| "{}".to_string());
+        let metadata_json =
+            serde_json::to_string(&task.metadata).unwrap_or_else(|_| "{}".to_string());
         let status_str = format!("{:?}", task.status);
 
         self.conn.execute(
@@ -465,7 +471,8 @@ impl Database {
 
         let task_iter = stmt.query_map([], |row| {
             let metadata_str: String = row.get("metadata")?;
-            let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&metadata_str).unwrap_or_default();
+            let metadata: std::collections::HashMap<String, String> =
+                serde_json::from_str(&metadata_str).unwrap_or_default();
 
             Ok(crate::models::Task {
                 id: row.get("id")?,
@@ -501,7 +508,8 @@ impl Database {
     pub fn update_task(&self, task: &crate::models::Task) -> Result<(), rusqlite::Error> {
         log::info!("Updating task: {}", task.id);
 
-        let metadata_json = serde_json::to_string(&task.metadata).unwrap_or_else(|_| "{}".to_string());
+        let metadata_json =
+            serde_json::to_string(&task.metadata).unwrap_or_else(|_| "{}".to_string());
         let status_str = format!("{:?}", task.status);
 
         self.conn.execute(
@@ -526,17 +534,22 @@ impl Database {
     /// Delete a task by ID
     pub fn delete_task(&self, task_id: &str) -> Result<(), rusqlite::Error> {
         log::info!("Deleting task: {}", task_id);
-        self.conn.execute("DELETE FROM tasks WHERE id = ?1", [task_id])?;
+        self.conn
+            .execute("DELETE FROM tasks WHERE id = ?1", [task_id])?;
         Ok(())
     }
 
     // ===== Review Template Management (Task T042) =====
 
     /// Store a review template
-    pub fn store_review_template(&self, template: &crate::models::ReviewTemplate) -> Result<(), rusqlite::Error> {
+    pub fn store_review_template(
+        &self,
+        template: &crate::models::ReviewTemplate,
+    ) -> Result<(), rusqlite::Error> {
         log::info!("Storing review template: {}", template.id);
 
-        let placeholders_json = serde_json::to_string(&template.placeholders).unwrap_or_else(|_| "[]".to_string());
+        let placeholders_json =
+            serde_json::to_string(&template.placeholders).unwrap_or_else(|_| "[]".to_string());
 
         self.conn.execute(
             "INSERT OR REPLACE INTO review_templates (id, name, content, placeholders, category, usage_count, created_at, updated_at)
@@ -557,16 +570,19 @@ impl Database {
     }
 
     /// Get all review templates
-    pub fn get_review_templates(&self) -> Result<Vec<crate::models::ReviewTemplate>, rusqlite::Error> {
+    pub fn get_review_templates(
+        &self,
+    ) -> Result<Vec<crate::models::ReviewTemplate>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, content, placeholders, category, usage_count, created_at, updated_at
              FROM review_templates
-             ORDER BY usage_count DESC, name ASC"
+             ORDER BY usage_count DESC, name ASC",
         )?;
 
         let template_iter = stmt.query_map([], |row| {
             let placeholders_str: String = row.get("placeholders")?;
-            let placeholders: Vec<String> = serde_json::from_str(&placeholders_str).unwrap_or_default();
+            let placeholders: Vec<String> =
+                serde_json::from_str(&placeholders_str).unwrap_or_default();
 
             Ok(crate::models::ReviewTemplate {
                 id: row.get("id")?,
@@ -600,7 +616,11 @@ impl Database {
     // ===== Tag CRUD Operations (Task T080) =====
 
     /// Store a tag
-    pub fn store_tag(&self, tag: &crate::models::Tag, repo_path: &str) -> Result<(), rusqlite::Error> {
+    pub fn store_tag(
+        &self,
+        tag: &crate::models::Tag,
+        repo_path: &str,
+    ) -> Result<(), rusqlite::Error> {
         log::info!("Storing tag: {}", tag.id);
 
         self.conn.execute(
@@ -627,7 +647,7 @@ impl Database {
             "SELECT id, label, color, description, usage_count, created_at, updated_at
              FROM tags
              WHERE repo_path = ?1
-             ORDER BY usage_count DESC, label ASC"
+             ORDER BY usage_count DESC, label ASC",
         )?;
 
         let tag_iter = stmt.query_map([repo_path], |row| {
@@ -672,10 +692,14 @@ impl Database {
     // ===== Review Guide Operations =====
 
     /// Store a review guide
-    pub fn store_review_guide(&self, guide: &crate::models::ReviewGuideItem) -> Result<(), rusqlite::Error> {
+    pub fn store_review_guide(
+        &self,
+        guide: &crate::models::ReviewGuideItem,
+    ) -> Result<(), rusqlite::Error> {
         log::info!("Storing review guide: {}", guide.id);
 
-        let extensions_json = serde_json::to_string(&guide.applicable_extensions).unwrap_or_else(|_| "[]".to_string());
+        let extensions_json = serde_json::to_string(&guide.applicable_extensions)
+            .unwrap_or_else(|_| "[]".to_string());
         let category_str = format!("{:?}", guide.category);
         let severity_str = format!("{:?}", guide.severity);
 
@@ -699,7 +723,9 @@ impl Database {
     }
 
     /// Get all review guides
-    pub fn get_review_guides(&self) -> Result<Vec<crate::models::ReviewGuideItem>, rusqlite::Error> {
+    pub fn get_review_guides(
+        &self,
+    ) -> Result<Vec<crate::models::ReviewGuideItem>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, category, title, description, severity, reference_url, applicable_extensions
              FROM review_guides
@@ -708,7 +734,8 @@ impl Database {
 
         let guide_iter = stmt.query_map([], |row| {
             let extensions_str: String = row.get("applicable_extensions")?;
-            let applicable_extensions: Vec<String> = serde_json::from_str(&extensions_str).unwrap_or_default();
+            let applicable_extensions: Vec<String> =
+                serde_json::from_str(&extensions_str).unwrap_or_default();
 
             Ok(crate::models::ReviewGuideItem {
                 id: row.get("id")?,
@@ -738,7 +765,8 @@ impl Database {
     /// Delete a review guide
     pub fn delete_review_guide(&self, guide_id: &str) -> Result<(), rusqlite::Error> {
         log::info!("Deleting review guide: {}", guide_id);
-        self.conn.execute("DELETE FROM review_guides WHERE id = ?1", [guide_id])?;
+        self.conn
+            .execute("DELETE FROM review_guides WHERE id = ?1", [guide_id])?;
         Ok(())
     }
 
@@ -751,7 +779,11 @@ impl Database {
         task_type: &str,
         file_paths: &[String],
     ) -> Result<crate::models::Task, rusqlite::Error> {
-        log::info!("Creating local task: {} with {} files", title, file_paths.len());
+        log::info!(
+            "Creating local task: {} with {} files",
+            title,
+            file_paths.len()
+        );
 
         let task_id = uuid::Uuid::new_v4().to_string();
         let timestamp = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -838,7 +870,7 @@ impl Database {
     pub fn get_local_tasks(&self) -> Result<Vec<crate::models::Task>, rusqlite::Error> {
         let mut stmt = self.conn.prepare(
             "SELECT id, title, status, task_type FROM local_tasks
-             ORDER BY created_at DESC"
+             ORDER BY created_at DESC",
         )?;
 
         let task_iter = stmt.query_map([], |row| {
@@ -918,7 +950,8 @@ impl Database {
     /// Delete a local task
     pub fn delete_local_task(&self, task_id: &str) -> Result<(), rusqlite::Error> {
         log::info!("Deleting local task: {}", task_id);
-        self.conn.execute("DELETE FROM local_tasks WHERE id = ?1", [task_id])?;
+        self.conn
+            .execute("DELETE FROM local_tasks WHERE id = ?1", [task_id])?;
         // Files will be deleted automatically due to FOREIGN KEY
         Ok(())
     }
@@ -932,14 +965,24 @@ impl Database {
         review_comment: Option<&str>,
         submitted_by: Option<&str>,
     ) -> Result<(), rusqlite::Error> {
-        log::info!("Updating review status for file {} in task {} to {}", file_id, task_id, review_status);
+        log::info!(
+            "Updating review status for file {} in task {} to {}",
+            file_id,
+            task_id,
+            review_status
+        );
 
         // Update the current status in local_task_files
         self.conn.execute(
             "UPDATE local_task_files
              SET review_status = ?1, review_comment = ?2
              WHERE id = ?3 AND task_id = ?4",
-            (review_status, review_comment.unwrap_or(""), file_id, task_id),
+            (
+                review_status,
+                review_comment.unwrap_or(""),
+                file_id,
+                task_id,
+            ),
         )?;
 
         // Also insert into comment history
@@ -973,7 +1016,7 @@ impl Database {
             "SELECT id, task_id, file_id, review_status, review_comment, submitted_by, submitted_at
              FROM file_review_comments
              WHERE task_id = ?1 AND file_id = ?2
-             ORDER BY submitted_at ASC"
+             ORDER BY submitted_at ASC",
         )?;
 
         let comment_iter = stmt.query_map([task_id, file_id], |row| {
@@ -1013,7 +1056,7 @@ impl Database {
 
         // Get task info
         let mut stmt = self.conn.prepare(
-            "SELECT title, status, task_type, created_at FROM local_tasks WHERE id = ?1"
+            "SELECT title, status, task_type, created_at FROM local_tasks WHERE id = ?1",
         )?;
         let task_result = stmt.query_row([&task_id], |row| {
             Ok((
@@ -1059,7 +1102,8 @@ impl Database {
         };
 
         for file_result in file_iter {
-            let (file_id, file_path, file_name, file_status, review_status, review_comment) = file_result?;
+            let (file_id, file_path, file_name, file_status, review_status, review_comment) =
+                file_result?;
 
             // Row with current review status
             let row = format!(
@@ -1083,7 +1127,7 @@ impl Database {
                 "SELECT id, review_status, review_comment, submitted_by, submitted_at
                  FROM file_review_comments
                  WHERE task_id = ?1 AND file_id = ?2
-                 ORDER BY submitted_at ASC"
+                 ORDER BY submitted_at ASC",
             )?;
 
             let comment_iter = comment_stmt.query_map([&task_id, file_id.as_str()], |row| {
@@ -1097,7 +1141,8 @@ impl Database {
             })?;
 
             for comment_result in comment_iter {
-                let (comment_id, comment_status, comment_text, comment_author, comment_date) = comment_result?;
+                let (comment_id, comment_status, comment_text, comment_author, comment_date) =
+                    comment_result?;
                 let comment_row = format!(
                     "{},{},{},{},{},{},{},{},{},{},{},{},{},{},{},\n",
                     escape_csv(&task_id),
@@ -1128,7 +1173,7 @@ impl Database {
     // ============================================================================
 
     /// Create Gerrit tables if they don't exist
-    pub fn init_gerrit_schema(&self) -> Result<(), HyperReviewError> {
+    pub fn init_gerrit_schema(&mut self) -> Result<(), HyperReviewError> {
         self.conn.execute_batch("
             CREATE TABLE IF NOT EXISTS gerrit_instances (
                 id TEXT PRIMARY KEY,
@@ -1258,7 +1303,9 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_review_templates_category ON review_templates(category);
         ").map_err(HyperReviewError::Database)?;
 
-        // Migration: Add missing columns to existing tables if they don't exist
+        let mut runner = MigrationRunner::new(&mut self.conn);
+        runner.run_migrations()?;
+
         // Check if username column exists in gerrit_instances table
         let check_column = |table_name: &str, col_name: &str| -> rusqlite::Result<bool> {
             let mut stmt = self.conn.prepare(&format!(
@@ -1270,7 +1317,11 @@ impl Database {
         };
 
         // Check if gerrit_instances table exists and has the username column
-        let table_exists = self.conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_instances'")
+        let table_exists = self
+            .conn
+            .prepare(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_instances'",
+            )
             .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
             .is_ok();
 
@@ -1278,10 +1329,12 @@ impl Database {
             // Add missing columns if they don't exist
             if !check_column("gerrit_instances", "username").unwrap_or(false) {
                 log::info!("Adding username column to gerrit_instances table");
-                self.conn.execute(
-                    "ALTER TABLE gerrit_instances ADD COLUMN username TEXT DEFAULT 'admin'",
-                    []
-                ).map_err(HyperReviewError::Database)?;
+                self.conn
+                    .execute(
+                        "ALTER TABLE gerrit_instances ADD COLUMN username TEXT DEFAULT 'admin'",
+                        [],
+                    )
+                    .map_err(HyperReviewError::Database)?;
             }
 
             if !check_column("gerrit_instances", "password_encrypted").unwrap_or(false) {
@@ -1294,18 +1347,22 @@ impl Database {
 
             if !check_column("gerrit_instances", "version").unwrap_or(false) {
                 log::info!("Adding version column to gerrit_instances table");
-                self.conn.execute(
-                    "ALTER TABLE gerrit_instances ADD COLUMN version TEXT DEFAULT ''",
-                    []
-                ).map_err(HyperReviewError::Database)?;
+                self.conn
+                    .execute(
+                        "ALTER TABLE gerrit_instances ADD COLUMN version TEXT DEFAULT ''",
+                        [],
+                    )
+                    .map_err(HyperReviewError::Database)?;
             }
 
             if !check_column("gerrit_instances", "last_connected").unwrap_or(false) {
                 log::info!("Adding last_connected column to gerrit_instances table");
-                self.conn.execute(
-                    "ALTER TABLE gerrit_instances ADD COLUMN last_connected TEXT",
-                    []
-                ).map_err(HyperReviewError::Database)?;
+                self.conn
+                    .execute(
+                        "ALTER TABLE gerrit_instances ADD COLUMN last_connected TEXT",
+                        [],
+                    )
+                    .map_err(HyperReviewError::Database)?;
             }
 
             if !check_column("gerrit_instances", "connection_status").unwrap_or(false) {
@@ -1326,10 +1383,12 @@ impl Database {
 
             if !check_column("gerrit_instances", "max_changes").unwrap_or(false) {
                 log::info!("Adding max_changes column to gerrit_instances table");
-                self.conn.execute(
-                    "ALTER TABLE gerrit_instances ADD COLUMN max_changes INTEGER DEFAULT 100",
-                    []
-                ).map_err(HyperReviewError::Database)?;
+                self.conn
+                    .execute(
+                        "ALTER TABLE gerrit_instances ADD COLUMN max_changes INTEGER DEFAULT 100",
+                        [],
+                    )
+                    .map_err(HyperReviewError::Database)?;
             }
 
             if !check_column("gerrit_instances", "created_at").unwrap_or(false) {
@@ -1350,25 +1409,31 @@ impl Database {
         }
 
         // Similar migration for gerrit_changes table
-        let changes_table_exists = self.conn.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_changes'")
+        let changes_table_exists = self
+            .conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='gerrit_changes'")
             .and_then(|mut stmt| stmt.query_row([], |_| Ok(())))
             .is_ok();
 
         if changes_table_exists {
             if !check_column("gerrit_changes", "insertions").unwrap_or(false) {
                 log::info!("Adding insertions column to gerrit_changes table");
-                self.conn.execute(
-                    "ALTER TABLE gerrit_changes ADD COLUMN insertions INTEGER DEFAULT 0",
-                    []
-                ).map_err(HyperReviewError::Database)?;
+                self.conn
+                    .execute(
+                        "ALTER TABLE gerrit_changes ADD COLUMN insertions INTEGER DEFAULT 0",
+                        [],
+                    )
+                    .map_err(HyperReviewError::Database)?;
             }
 
             if !check_column("gerrit_changes", "deletions").unwrap_or(false) {
                 log::info!("Adding deletions column to gerrit_changes table");
-                self.conn.execute(
-                    "ALTER TABLE gerrit_changes ADD COLUMN deletions INTEGER DEFAULT 0",
-                    []
-                ).map_err(HyperReviewError::Database)?;
+                self.conn
+                    .execute(
+                        "ALTER TABLE gerrit_changes ADD COLUMN deletions INTEGER DEFAULT 0",
+                        [],
+                    )
+                    .map_err(HyperReviewError::Database)?;
             }
         }
 
@@ -1377,33 +1442,38 @@ impl Database {
 
     /// Store a Gerrit instance
     pub fn store_gerrit_instance(&self, instance: &GerritInstance) -> Result<(), HyperReviewError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO gerrit_instances 
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO gerrit_instances 
              (id, name, url, username, password_encrypted, version, last_connected, 
               is_active, connection_status, polling_interval, max_changes, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![
-                instance.id,
-                instance.name,
-                instance.url,
-                instance.username,
-                instance.password_encrypted,
-                instance.version,
-                instance.last_connected,
-                instance.is_active,
-                instance.connection_status.to_string(),
-                instance.polling_interval,
-                instance.max_changes,
-                instance.created_at,
-                instance.updated_at
-            ],
-        ).map_err(HyperReviewError::Database)?;
+                params![
+                    instance.id,
+                    instance.name,
+                    instance.url,
+                    instance.username,
+                    instance.password_encrypted,
+                    instance.version,
+                    instance.last_connected,
+                    instance.is_active,
+                    instance.connection_status.to_string(),
+                    instance.polling_interval,
+                    instance.max_changes,
+                    instance.created_at,
+                    instance.updated_at
+                ],
+            )
+            .map_err(HyperReviewError::Database)?;
 
         Ok(())
     }
 
     /// Get a Gerrit instance by ID
-    pub fn get_gerrit_instance(&self, instance_id: &str) -> Result<Option<GerritInstance>, HyperReviewError> {
+    pub fn get_gerrit_instance(
+        &self,
+        instance_id: &str,
+    ) -> Result<Option<GerritInstance>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, name, url, username, password_encrypted, version, last_connected,
                     is_active, connection_status, polling_interval, max_changes, created_at, updated_at
@@ -1443,23 +1513,25 @@ impl Database {
              FROM gerrit_instances ORDER BY name"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map([], |row| {
-            Ok(GerritInstance {
-                id: row.get(0)?,
-                name: row.get(1)?,
-                url: row.get(2)?,
-                username: row.get(3)?,
-                password_encrypted: row.get(4)?,
-                version: row.get(5)?,
-                is_active: row.get::<_, i32>(7)? != 0,
-                last_connected: row.get(6)?,
-                connection_status: ConnectionStatus::from_string(&row.get::<_, String>(8)?),
-                polling_interval: row.get(9)?,
-                max_changes: row.get(10)?,
-                created_at: row.get(11)?,
-                updated_at: row.get(12)?,
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(GerritInstance {
+                    id: row.get(0)?,
+                    name: row.get(1)?,
+                    url: row.get(2)?,
+                    username: row.get(3)?,
+                    password_encrypted: row.get(4)?,
+                    version: row.get(5)?,
+                    is_active: row.get::<_, i32>(7)? != 0,
+                    last_connected: row.get(6)?,
+                    connection_status: ConnectionStatus::from_string(&row.get::<_, String>(8)?),
+                    polling_interval: row.get(9)?,
+                    max_changes: row.get(10)?,
+                    created_at: row.get(11)?,
+                    updated_at: row.get(12)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut instances = Vec::new();
         for row in rows {
@@ -1471,10 +1543,13 @@ impl Database {
 
     /// Delete a Gerrit instance
     pub fn delete_gerrit_instance(&self, instance_id: &str) -> Result<bool, HyperReviewError> {
-        let rows_affected = self.conn.execute(
-            "DELETE FROM gerrit_instances WHERE id = ?1",
-            params![instance_id],
-        ).map_err(HyperReviewError::Database)?;
+        let rows_affected = self
+            .conn
+            .execute(
+                "DELETE FROM gerrit_instances WHERE id = ?1",
+                params![instance_id],
+            )
+            .map_err(HyperReviewError::Database)?;
 
         Ok(rows_affected > 0)
     }
@@ -1519,7 +1594,10 @@ impl Database {
     }
 
     /// Get a Gerrit change by ID
-    pub fn get_gerrit_change(&self, change_id: &str) -> Result<Option<GerritChange>, HyperReviewError> {
+    pub fn get_gerrit_change(
+        &self,
+        change_id: &str,
+    ) -> Result<Option<GerritChange>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
                     created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
@@ -1606,7 +1684,10 @@ impl Database {
     }
 
     /// Get all Gerrit changes for an instance
-    pub fn get_gerrit_changes_for_instance(&self, instance_id: &str) -> Result<Vec<GerritChange>, HyperReviewError> {
+    pub fn get_gerrit_changes_for_instance(
+        &self,
+        instance_id: &str,
+    ) -> Result<Vec<GerritChange>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, change_id, instance_id, project, branch, subject, status, owner_name, owner_email,
                     created_at, updated_at, insertions, deletions, current_revision, current_patch_set_num, 
@@ -1615,43 +1696,45 @@ impl Database {
              FROM gerrit_changes WHERE instance_id = ?1 ORDER BY updated_at DESC"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map(params![instance_id], |row| {
-            let metadata_str: String = row.get(22)?;
-            let metadata = serde_json::from_str(&metadata_str).unwrap_or_default();
+        let rows = stmt
+            .query_map(params![instance_id], |row| {
+                let metadata_str: String = row.get(22)?;
+                let metadata = serde_json::from_str(&metadata_str).unwrap_or_default();
 
-            Ok(GerritChange {
-                id: row.get(0)?,
-                change_id: row.get(1)?,
-                instance_id: row.get(2)?,
-                project: row.get(3)?,
-                branch: row.get(4)?,
-                subject: row.get(5)?,
-                status: ChangeStatus::from_string(&row.get::<_, String>(6)?),
-                owner: crate::models::gerrit::GerritUser {
-                    account_id: 0,
-                    name: row.get(7)?,
-                    email: row.get(8)?,
-                    username: None,
-                    avatar_url: None,
-                },
-                created: row.get(9)?,
-                updated: row.get(10)?,
-                insertions: row.get(11)?,
-                deletions: row.get(12)?,
-                current_revision: row.get(13)?,
-                current_patch_set_num: row.get(14)?,
-                patch_sets: Vec::new(),
-                files: Vec::new(),
-                total_files: row.get(15)?,
-                reviewed_files: row.get(16)?,
-                local_comments: row.get(17)?,
-                remote_comments: row.get(18)?,
-                import_status: ImportStatus::from_string(&row.get::<_, String>(19)?),
-                last_sync: row.get(20)?,
-                conflict_status: ConflictStatus::from_string(&row.get::<_, String>(21)?),
-                metadata,
+                Ok(GerritChange {
+                    id: row.get(0)?,
+                    change_id: row.get(1)?,
+                    instance_id: row.get(2)?,
+                    project: row.get(3)?,
+                    branch: row.get(4)?,
+                    subject: row.get(5)?,
+                    status: ChangeStatus::from_string(&row.get::<_, String>(6)?),
+                    owner: crate::models::gerrit::GerritUser {
+                        account_id: 0,
+                        name: row.get(7)?,
+                        email: row.get(8)?,
+                        username: None,
+                        avatar_url: None,
+                    },
+                    created: row.get(9)?,
+                    updated: row.get(10)?,
+                    insertions: row.get(11)?,
+                    deletions: row.get(12)?,
+                    current_revision: row.get(13)?,
+                    current_patch_set_num: row.get(14)?,
+                    patch_sets: Vec::new(),
+                    files: Vec::new(),
+                    total_files: row.get(15)?,
+                    reviewed_files: row.get(16)?,
+                    local_comments: row.get(17)?,
+                    remote_comments: row.get(18)?,
+                    import_status: ImportStatus::from_string(&row.get::<_, String>(19)?),
+                    last_sync: row.get(20)?,
+                    conflict_status: ConflictStatus::from_string(&row.get::<_, String>(21)?),
+                    metadata,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut changes = Vec::new();
         for row in rows {
@@ -1663,17 +1746,22 @@ impl Database {
 
     /// Delete a Gerrit change
     pub fn delete_gerrit_change(&self, change_id: &str) -> Result<bool, HyperReviewError> {
-        let rows_affected = self.conn.execute(
-            "DELETE FROM gerrit_changes WHERE id = ?1 OR change_id = ?1",
-            params![change_id],
-        ).map_err(HyperReviewError::Database)?;
+        let rows_affected = self
+            .conn
+            .execute(
+                "DELETE FROM gerrit_changes WHERE id = ?1 OR change_id = ?1",
+                params![change_id],
+            )
+            .map_err(HyperReviewError::Database)?;
 
         Ok(rows_affected > 0)
     }
 
     /// Clear all Gerrit data (for debugging/testing purposes)
     pub fn clear_all_gerrit_data(&self) -> Result<usize, HyperReviewError> {
-        let rows_affected = self.conn.execute("DELETE FROM gerrit_instances", [])
+        let rows_affected = self
+            .conn
+            .execute("DELETE FROM gerrit_instances", [])
             .map_err(HyperReviewError::Database)?;
         Ok(rows_affected)
     }
@@ -1683,9 +1771,12 @@ impl Database {
     // ============================================================================
 
     /// Create a new review session
-    pub fn create_review_session(&self, session: &crate::models::gerrit::ReviewSession) -> Result<(), HyperReviewError> {
+    pub fn create_review_session(
+        &self,
+        session: &crate::models::gerrit::ReviewSession,
+    ) -> Result<(), HyperReviewError> {
         let progress_json = serde_json::to_string(&session.progress).unwrap_or_default();
-        
+
         self.conn.execute(
             "INSERT INTO review_sessions 
              (id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at)
@@ -1707,7 +1798,10 @@ impl Database {
     }
 
     /// Get a review session by ID
-    pub fn get_review_session(&self, session_id: &str) -> Result<Option<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+    pub fn get_review_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Option<crate::models::gerrit::ReviewSession>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
              FROM review_sessions WHERE id = ?1"
@@ -1738,41 +1832,54 @@ impl Database {
     }
 
     /// Update review session progress
-    pub fn update_review_session_progress(&self, session_id: &str, progress: &crate::models::gerrit::ReviewProgress) -> Result<(), HyperReviewError> {
+    pub fn update_review_session_progress(
+        &self,
+        session_id: &str,
+        progress: &crate::models::gerrit::ReviewProgress,
+    ) -> Result<(), HyperReviewError> {
         let progress_json = serde_json::to_string(progress).unwrap_or_default();
         let now = chrono::Utc::now().format("%Y-%m-%d %H:%M:%S").to_string();
 
-        self.conn.execute(
-            "UPDATE review_sessions SET progress_data = ?1, updated_at = ?2 WHERE id = ?3",
-            params![progress_json, now, session_id],
-        ).map_err(HyperReviewError::Database)?;
+        self.conn
+            .execute(
+                "UPDATE review_sessions SET progress_data = ?1, updated_at = ?2 WHERE id = ?3",
+                params![progress_json, now, session_id],
+            )
+            .map_err(HyperReviewError::Database)?;
 
         Ok(())
     }
 
     /// Get all review sessions for a change
-    pub fn get_review_sessions_for_change(&self, change_id: &str) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+    pub fn get_review_sessions_for_change(
+        &self,
+        change_id: &str,
+    ) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
              FROM review_sessions WHERE change_id = ?1 ORDER BY created_at DESC"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map(params![change_id], |row| {
-            let progress_json: String = row.get(6)?;
-            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+        let rows = stmt
+            .query_map(params![change_id], |row| {
+                let progress_json: String = row.get(6)?;
+                let progress = serde_json::from_str(&progress_json).unwrap_or_default();
 
-            Ok(crate::models::gerrit::ReviewSession {
-                id: row.get(0)?,
-                change_id: row.get(1)?,
-                patch_set_number: row.get(2)?,
-                reviewer_id: row.get(3)?,
-                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
-                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
-                progress,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                Ok(crate::models::gerrit::ReviewSession {
+                    id: row.get(0)?,
+                    change_id: row.get(1)?,
+                    patch_set_number: row.get(2)?,
+                    reviewer_id: row.get(3)?,
+                    mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                    status: crate::models::gerrit::ReviewStatus::from_string(
+                        &row.get::<_, String>(5)?,
+                    ),
+                    progress,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut sessions = Vec::new();
         for row in rows {
@@ -1783,7 +1890,10 @@ impl Database {
     }
 
     /// Store or update a review session
-    pub fn store_review_session(&self, session: &crate::models::gerrit::ReviewSession) -> Result<(), HyperReviewError> {
+    pub fn store_review_session(
+        &self,
+        session: &crate::models::gerrit::ReviewSession,
+    ) -> Result<(), HyperReviewError> {
         let progress_json = serde_json::to_string(&session.progress).unwrap_or_default();
 
         self.conn.execute(
@@ -1807,28 +1917,35 @@ impl Database {
     }
 
     /// Get all review sessions for a reviewer
-    pub fn get_review_sessions_for_reviewer(&self, reviewer_id: &str) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+    pub fn get_review_sessions_for_reviewer(
+        &self,
+        reviewer_id: &str,
+    ) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
              FROM review_sessions WHERE reviewer_id = ?1 ORDER BY updated_at DESC"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map(params![reviewer_id], |row| {
-            let progress_json: String = row.get(6)?;
-            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+        let rows = stmt
+            .query_map(params![reviewer_id], |row| {
+                let progress_json: String = row.get(6)?;
+                let progress = serde_json::from_str(&progress_json).unwrap_or_default();
 
-            Ok(crate::models::gerrit::ReviewSession {
-                id: row.get(0)?,
-                change_id: row.get(1)?,
-                patch_set_number: row.get(2)?,
-                reviewer_id: row.get(3)?,
-                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
-                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
-                progress,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                Ok(crate::models::gerrit::ReviewSession {
+                    id: row.get(0)?,
+                    change_id: row.get(1)?,
+                    patch_set_number: row.get(2)?,
+                    reviewer_id: row.get(3)?,
+                    mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                    status: crate::models::gerrit::ReviewStatus::from_string(
+                        &row.get::<_, String>(5)?,
+                    ),
+                    progress,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut sessions = Vec::new();
         for row in rows {
@@ -1839,28 +1956,34 @@ impl Database {
     }
 
     /// Get active review sessions (in progress)
-    pub fn get_active_review_sessions(&self) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
+    pub fn get_active_review_sessions(
+        &self,
+    ) -> Result<Vec<crate::models::gerrit::ReviewSession>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, change_id, patch_set_number, reviewer_id, mode, status, progress_data, created_at, updated_at
              FROM review_sessions WHERE status = 'in_progress' ORDER BY updated_at DESC"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map([], |row| {
-            let progress_json: String = row.get(6)?;
-            let progress = serde_json::from_str(&progress_json).unwrap_or_default();
+        let rows = stmt
+            .query_map([], |row| {
+                let progress_json: String = row.get(6)?;
+                let progress = serde_json::from_str(&progress_json).unwrap_or_default();
 
-            Ok(crate::models::gerrit::ReviewSession {
-                id: row.get(0)?,
-                change_id: row.get(1)?,
-                patch_set_number: row.get(2)?,
-                reviewer_id: row.get(3)?,
-                mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
-                status: crate::models::gerrit::ReviewStatus::from_string(&row.get::<_, String>(5)?),
-                progress,
-                created_at: row.get(7)?,
-                updated_at: row.get(8)?,
+                Ok(crate::models::gerrit::ReviewSession {
+                    id: row.get(0)?,
+                    change_id: row.get(1)?,
+                    patch_set_number: row.get(2)?,
+                    reviewer_id: row.get(3)?,
+                    mode: crate::models::gerrit::ReviewMode::from_string(&row.get::<_, String>(4)?),
+                    status: crate::models::gerrit::ReviewStatus::from_string(
+                        &row.get::<_, String>(5)?,
+                    ),
+                    progress,
+                    created_at: row.get(7)?,
+                    updated_at: row.get(8)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut sessions = Vec::new();
         for row in rows {
@@ -1875,7 +1998,10 @@ impl Database {
     // ============================================================================
 
     /// Store downloaded change files
-    pub fn store_change_file(&self, file: &crate::models::gerrit::ChangeFile) -> Result<(), HyperReviewError> {
+    pub fn store_change_file(
+        &self,
+        file: &crate::models::gerrit::ChangeFile,
+    ) -> Result<(), HyperReviewError> {
         let diff_json = serde_json::to_string(&file.diff).unwrap_or_default();
 
         self.conn.execute(
@@ -1900,29 +2026,37 @@ impl Database {
     }
 
     /// Get all files for a change and patch set
-    pub fn get_change_files(&self, change_id: &str, patch_set_number: u32) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
+    pub fn get_change_files(
+        &self,
+        change_id: &str,
+        patch_set_number: u32,
+    ) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, change_id, patch_set_number, file_path, change_type, old_content, new_content, diff_data, file_size, downloaded_at
              FROM change_files WHERE change_id = ?1 AND patch_set_number = ?2 ORDER BY file_path"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map(params![change_id, patch_set_number], |row| {
-            let diff_json: String = row.get(7)?;
-            let diff = serde_json::from_str(&diff_json).unwrap_or_default();
+        let rows = stmt
+            .query_map(params![change_id, patch_set_number], |row| {
+                let diff_json: String = row.get(7)?;
+                let diff = serde_json::from_str(&diff_json).unwrap_or_default();
 
-            Ok(crate::models::gerrit::ChangeFile {
-                id: row.get(0)?,
-                change_id: row.get(1)?,
-                patch_set_number: row.get(2)?,
-                file_path: row.get(3)?,
-                change_type: crate::models::gerrit::FileChangeType::from_string(&row.get::<_, String>(4)?),
-                old_content: row.get(5)?,
-                new_content: row.get(6)?,
-                diff,
-                file_size: row.get(8)?,
-                downloaded_at: row.get(9)?,
+                Ok(crate::models::gerrit::ChangeFile {
+                    id: row.get(0)?,
+                    change_id: row.get(1)?,
+                    patch_set_number: row.get(2)?,
+                    file_path: row.get(3)?,
+                    change_type: crate::models::gerrit::FileChangeType::from_string(
+                        &row.get::<_, String>(4)?,
+                    ),
+                    old_content: row.get(5)?,
+                    new_content: row.get(6)?,
+                    diff,
+                    file_size: row.get(8)?,
+                    downloaded_at: row.get(9)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut files = Vec::new();
         for row in rows {
@@ -1933,37 +2067,56 @@ impl Database {
     }
 
     /// Get all files for a change by Gerrit change ID and patch set
-    pub fn get_change_files_by_gerrit_id(&self, gerrit_change_id: &str, patch_set_number: u32) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
+    pub fn get_change_files_by_gerrit_id(
+        &self,
+        gerrit_change_id: &str,
+        patch_set_number: u32,
+    ) -> Result<Vec<crate::models::gerrit::ChangeFile>, HyperReviewError> {
         // First find the database record ID for this Gerrit change ID
-        let db_change_id = self.conn.query_row(
-            "SELECT id FROM gerrit_changes WHERE change_id = ?1",
-            params![gerrit_change_id],
-            |row| row.get::<_, String>(0)
-        ).map_err(HyperReviewError::Database)?;
+        let db_change_id = self
+            .conn
+            .query_row(
+                "SELECT id FROM gerrit_changes WHERE change_id = ?1",
+                params![gerrit_change_id],
+                |row| row.get::<_, String>(0),
+            )
+            .map_err(HyperReviewError::Database)?;
 
         // Now get the files using the database record ID
         self.get_change_files(&db_change_id, patch_set_number)
     }
 
     /// Check if change files are downloaded
-    pub fn is_change_downloaded(&self, change_id: &str, patch_set_number: u32) -> Result<bool, HyperReviewError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT COUNT(*) FROM change_files WHERE change_id = ?1 AND patch_set_number = ?2"
-        ).map_err(HyperReviewError::Database)?;
+    pub fn is_change_downloaded(
+        &self,
+        change_id: &str,
+        patch_set_number: u32,
+    ) -> Result<bool, HyperReviewError> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT COUNT(*) FROM change_files WHERE change_id = ?1 AND patch_set_number = ?2",
+            )
+            .map_err(HyperReviewError::Database)?;
 
-        let count: i64 = stmt.query_row(params![change_id, patch_set_number], |row| row.get(0))
+        let count: i64 = stmt
+            .query_row(params![change_id, patch_set_number], |row| row.get(0))
             .map_err(HyperReviewError::Database)?;
 
         Ok(count > 0)
     }
 
     /// Check if change files are downloaded by Gerrit change ID
-    pub fn is_change_downloaded_by_gerrit_id(&self, gerrit_change_id: &str, patch_set_number: u32) -> Result<bool, HyperReviewError> {
+    pub fn is_change_downloaded_by_gerrit_id(
+        &self,
+        gerrit_change_id: &str,
+        patch_set_number: u32,
+    ) -> Result<bool, HyperReviewError> {
         // First find the database record ID for this Gerrit change ID
         let db_change_id_result = self.conn.query_row(
             "SELECT id FROM gerrit_changes WHERE change_id = ?1",
             params![gerrit_change_id],
-            |row| row.get::<_, String>(0)
+            |row| row.get::<_, String>(0),
         );
 
         match db_change_id_result {
@@ -1983,43 +2136,55 @@ impl Database {
     // ============================================================================
 
     /// Create or update file review status
-    pub fn store_file_review(&self, file_review: &crate::models::gerrit::FileReview) -> Result<(), HyperReviewError> {
-        self.conn.execute(
-            "INSERT OR REPLACE INTO file_reviews 
+    pub fn store_file_review(
+        &self,
+        file_review: &crate::models::gerrit::FileReview,
+    ) -> Result<(), HyperReviewError> {
+        self.conn
+            .execute(
+                "INSERT OR REPLACE INTO file_reviews 
              (id, session_id, file_path, review_status, last_reviewed, created_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![
-                file_review.id,
-                file_review.session_id,
-                file_review.file_path,
-                file_review.review_status.to_string(),
-                file_review.last_reviewed,
-                file_review.created_at,
-                file_review.updated_at
-            ],
-        ).map_err(HyperReviewError::Database)?;
+                params![
+                    file_review.id,
+                    file_review.session_id,
+                    file_review.file_path,
+                    file_review.review_status.to_string(),
+                    file_review.last_reviewed,
+                    file_review.created_at,
+                    file_review.updated_at
+                ],
+            )
+            .map_err(HyperReviewError::Database)?;
 
         Ok(())
     }
 
     /// Get file reviews for a session
-    pub fn get_file_reviews_for_session(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::FileReview>, HyperReviewError> {
+    pub fn get_file_reviews_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::models::gerrit::FileReview>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, file_path, review_status, last_reviewed, created_at, updated_at
              FROM file_reviews WHERE session_id = ?1 ORDER BY file_path"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map(params![session_id], |row| {
-            Ok(crate::models::gerrit::FileReview {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                file_path: row.get(2)?,
-                review_status: crate::models::gerrit::FileReviewStatus::from_string(&row.get::<_, String>(3)?),
-                last_reviewed: row.get(4)?,
-                created_at: row.get(5)?,
-                updated_at: row.get(6)?,
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                Ok(crate::models::gerrit::FileReview {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    file_path: row.get(2)?,
+                    review_status: crate::models::gerrit::FileReviewStatus::from_string(
+                        &row.get::<_, String>(3)?,
+                    ),
+                    last_reviewed: row.get(4)?,
+                    created_at: row.get(5)?,
+                    updated_at: row.get(6)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut reviews = Vec::new();
         for row in rows {
@@ -2034,7 +2199,10 @@ impl Database {
     // ============================================================================
 
     /// Store a review comment
-    pub fn store_review_comment(&self, comment: &crate::models::gerrit::ReviewComment) -> Result<(), HyperReviewError> {
+    pub fn store_review_comment(
+        &self,
+        comment: &crate::models::gerrit::ReviewComment,
+    ) -> Result<(), HyperReviewError> {
         self.conn.execute(
             "INSERT OR REPLACE INTO review_comments 
              (id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at)
@@ -2057,26 +2225,36 @@ impl Database {
     }
 
     /// Get comments for a file in a session
-    pub fn get_review_comments_for_file(&self, session_id: &str, file_path: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+    pub fn get_review_comments_for_file(
+        &self,
+        session_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
              FROM review_comments WHERE session_id = ?1 AND file_path = ?2 ORDER BY line_number, created_at"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map(params![session_id, file_path], |row| {
-            Ok(crate::models::gerrit::ReviewComment {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                file_path: row.get(2)?,
-                line_number: row.get(3)?,
-                content: row.get(4)?,
-                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
-                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
-                parent_comment_id: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+        let rows = stmt
+            .query_map(params![session_id, file_path], |row| {
+                Ok(crate::models::gerrit::ReviewComment {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    file_path: row.get(2)?,
+                    line_number: row.get(3)?,
+                    content: row.get(4)?,
+                    comment_type: crate::models::gerrit::CommentType::from_string(
+                        &row.get::<_, String>(5)?,
+                    ),
+                    status: crate::models::gerrit::CommentStatus::from_string(
+                        &row.get::<_, String>(6)?,
+                    ),
+                    parent_comment_id: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut comments = Vec::new();
         for row in rows {
@@ -2087,26 +2265,35 @@ impl Database {
     }
 
     /// Get all comments for a session
-    pub fn get_review_comments_for_session(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+    pub fn get_review_comments_for_session(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
              FROM review_comments WHERE session_id = ?1 ORDER BY file_path, line_number, created_at"
         ).map_err(HyperReviewError::Database)?;
 
-        let rows = stmt.query_map(params![session_id], |row| {
-            Ok(crate::models::gerrit::ReviewComment {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                file_path: row.get(2)?,
-                line_number: row.get(3)?,
-                content: row.get(4)?,
-                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
-                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
-                parent_comment_id: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+        let rows = stmt
+            .query_map(params![session_id], |row| {
+                Ok(crate::models::gerrit::ReviewComment {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    file_path: row.get(2)?,
+                    line_number: row.get(3)?,
+                    content: row.get(4)?,
+                    comment_type: crate::models::gerrit::CommentType::from_string(
+                        &row.get::<_, String>(5)?,
+                    ),
+                    status: crate::models::gerrit::CommentStatus::from_string(
+                        &row.get::<_, String>(6)?,
+                    ),
+                    parent_comment_id: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         let mut comments = Vec::new();
         for row in rows {
@@ -2118,35 +2305,47 @@ impl Database {
 
     /// Delete a review comment
     pub fn delete_review_comment(&self, comment_id: &str) -> Result<bool, HyperReviewError> {
-        let rows_affected = self.conn.execute(
-            "DELETE FROM review_comments WHERE id = ?1",
-            params![comment_id],
-        ).map_err(HyperReviewError::Database)?;
+        let rows_affected = self
+            .conn
+            .execute(
+                "DELETE FROM review_comments WHERE id = ?1",
+                params![comment_id],
+            )
+            .map_err(HyperReviewError::Database)?;
 
         Ok(rows_affected > 0)
     }
 
     /// Get a single review comment by ID
-    pub fn get_review_comment(&self, comment_id: &str) -> Result<Option<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+    pub fn get_review_comment(
+        &self,
+        comment_id: &str,
+    ) -> Result<Option<crate::models::gerrit::ReviewComment>, HyperReviewError> {
         let mut stmt = self.conn.prepare(
             "SELECT id, session_id, file_path, line_number, content, comment_type, status, parent_comment_id, created_at, updated_at
              FROM review_comments WHERE id = ?1"
         ).map_err(HyperReviewError::Database)?;
 
-        let mut rows = stmt.query_map(params![comment_id], |row| {
-            Ok(crate::models::gerrit::ReviewComment {
-                id: row.get(0)?,
-                session_id: row.get(1)?,
-                file_path: row.get(2)?,
-                line_number: row.get(3)?,
-                content: row.get(4)?,
-                comment_type: crate::models::gerrit::CommentType::from_string(&row.get::<_, String>(5)?),
-                status: crate::models::gerrit::CommentStatus::from_string(&row.get::<_, String>(6)?),
-                parent_comment_id: row.get(7)?,
-                created_at: row.get(8)?,
-                updated_at: row.get(9)?,
+        let mut rows = stmt
+            .query_map(params![comment_id], |row| {
+                Ok(crate::models::gerrit::ReviewComment {
+                    id: row.get(0)?,
+                    session_id: row.get(1)?,
+                    file_path: row.get(2)?,
+                    line_number: row.get(3)?,
+                    content: row.get(4)?,
+                    comment_type: crate::models::gerrit::CommentType::from_string(
+                        &row.get::<_, String>(5)?,
+                    ),
+                    status: crate::models::gerrit::CommentStatus::from_string(
+                        &row.get::<_, String>(6)?,
+                    ),
+                    parent_comment_id: row.get(7)?,
+                    created_at: row.get(8)?,
+                    updated_at: row.get(9)?,
+                })
             })
-        }).map_err(HyperReviewError::Database)?;
+            .map_err(HyperReviewError::Database)?;
 
         match rows.next() {
             Some(row) => Ok(Some(row.map_err(HyperReviewError::Database)?)),
@@ -2155,35 +2354,46 @@ impl Database {
     }
 
     /// Update a review comment
-    pub fn update_review_comment(&self, comment: &crate::models::gerrit::ReviewComment) -> Result<(), HyperReviewError> {
-        self.conn.execute(
-            "UPDATE review_comments 
+    pub fn update_review_comment(
+        &self,
+        comment: &crate::models::gerrit::ReviewComment,
+    ) -> Result<(), HyperReviewError> {
+        self.conn
+            .execute(
+                "UPDATE review_comments 
              SET content = ?1, comment_type = ?2, status = ?3, updated_at = ?4
              WHERE id = ?5",
-            params![
-                comment.content,
-                comment.comment_type.to_string(),
-                comment.status.to_string(),
-                comment.updated_at,
-                comment.id
-            ],
-        ).map_err(HyperReviewError::Database)?;
+                params![
+                    comment.content,
+                    comment.comment_type.to_string(),
+                    comment.status.to_string(),
+                    comment.updated_at,
+                    comment.id
+                ],
+            )
+            .map_err(HyperReviewError::Database)?;
 
         Ok(())
     }
 
     /// Get session comments (alias for compatibility)
-    pub fn get_session_comments(&self, session_id: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+    pub fn get_session_comments(
+        &self,
+        session_id: &str,
+    ) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
         self.get_review_comments_for_session(session_id)
     }
 
     /// Get file comments (alias for compatibility)
-    pub fn get_file_comments(&self, session_id: &str, file_path: &str) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
+    pub fn get_file_comments(
+        &self,
+        session_id: &str,
+        file_path: &str,
+    ) -> Result<Vec<crate::models::gerrit::ReviewComment>, HyperReviewError> {
         self.get_review_comments_for_file(session_id, file_path)
     }
 
     // ============================================================================
     // Review Template Management Methods
     // ============================================================================
-
 }

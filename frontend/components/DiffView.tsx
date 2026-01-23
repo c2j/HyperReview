@@ -33,6 +33,7 @@ interface DiffViewProps {
   diffContext?: { base: string; head: string };
   selectedFile?: string | null;
   activeFilePath?: string;
+  mode?: 'local' | 'remote';
 }
 
 type ViewMode = 'diff' | 'old' | 'new';
@@ -44,6 +45,7 @@ const DiffView: React.FC<DiffViewProps> = ({
   diffContext,
   selectedFile,
   activeFilePath: _activeFilePath,
+  mode = 'local',
 }) => {
   const { t } = useTranslation();
   const { getFileDiff, getCompleteFileDiff, getReviewTemplates, readFileContent } = useApiClient();
@@ -565,7 +567,7 @@ const DiffView: React.FC<DiffViewProps> = ({
   };
 
   return (
-    <div id="tour-diff-view" className="h-full bg-editor-bg flex flex-col min-w-0 relative">
+    <div id="tour-diff-view" className={`h-full bg-editor-bg flex flex-col min-w-0 relative ${mode === 'remote' ? 'selection:bg-purple-900/40' : ''}`}>
       {/* File Header - Responsive Layout */}
       <div className="h-[36px] bg-editor-bg border-b border-editor-line flex items-center px-4 justify-between shrink-0 relative z-20">
         <div className="flex items-center gap-2 text-xs truncate mr-4">

@@ -59,7 +59,11 @@ import {
   useSearch,
   useGetCommands,
   useGetTags,
-  useCreateTag
+  useCreateTag,
+  useGetGerritChanges,
+  useGetGerritConfig,
+  useSaveGerritConfig,
+  useTestGerritConnection
 } from '../hooks/useIPC';
 
 // Import React hooks
@@ -117,6 +121,10 @@ export const useApiClient = () => {
   const getCommandsHook = useGetCommands();
   const getTagsHook = useGetTags();
   const createTagHook = useCreateTag();
+  const getGerritChangesHook = useGetGerritChanges();
+  const getGerritConfigHook = useGetGerritConfig();
+  const saveGerritConfigHook = useSaveGerritConfig();
+  const testGerritConnectionHook = useTestGerritConnection();
 
   // Repository Operations
   const getRecentRepos = async (): Promise<Repo[]> => {
@@ -474,6 +482,25 @@ export const useApiClient = () => {
     return readFileContentFromCommitHook({ file_path: filePath, commit_hash: commitHash });
   };
 
+  const getGerritChangesHook = useGetGerritChanges();
+  const getGerritFileContentHook = useGetGerritFileContent();
+
+  const getGerritChanges = async (offset?: number, limit?: number): Promise<any[]> => {
+    return getGerritChangesHook({ offset, limit });
+  };
+
+  const getGerritFileContent = async (changeId: string, patchSetNumber: number, filePath: string): Promise<string> => {
+    return getGerritFileContentHook({
+      changeId,
+      patchSetNumber,
+      filePath
+    });
+  };
+
+  const readFileContentFromCommit = async (filePath: string, commitHash: string): Promise<string> => {
+    return readFileContentFromCommitHook({ file_path: filePath, commit_hash: commitHash });
+  };
+
   const analyzeComplexity = async (filePath: string): Promise<any> => {
     return analyzeComplexityHook({ file_path: filePath });
   };
@@ -512,6 +539,50 @@ export const useApiClient = () => {
     color: string
   ): Promise<Tag> => {
     return createTagHook({ label, color });
+  };
+
+  const getGerritChanges = async (offset?: number, limit?: number): Promise<any[]> => {
+    return getGerritChangesHook({ offset, limit });
+  };
+
+  const getGerritFileContent = async (changeId: string, patchSetNumber: number, filePath: string): Promise<string> => {
+    return getGerritFileContentHook({
+      changeId,
+      patchSetNumber,
+      filePath
+    });
+  };
+
+  const getGerritConfig = async (): Promise<any> => {
+    try {
+      const config = await getGerritConfigHook();
+      console.log('[getGerritConfig] Returning config:', config);
+      return config;
+    } catch (error) {
+      console.error('[getGerritConfig] Failed to get config:', error);
+      return null;
+    }
+  };
+
+  const saveGerritConfig = async (config: { url: string; username: string; password?: string }): Promise<void> => {
+    try {
+      await saveGerritConfigHook(config);
+      console.log('[saveGerritConfig] Config saved successfully');
+    } catch (error) {
+      console.error('[saveGerritConfig] Failed to save config:', error);
+      throw error;
+    }
+  };
+
+  const testGerritConnection = async (config: { url: string; username: string; password?: string }): Promise<boolean> => {
+    try {
+      const result = await testGerritConnectionHook(config);
+      console.log('[testGerritConnection] Connection test result:', result);
+      return result;
+    } catch (error) {
+      console.error('[testGerritConnection] Connection test failed:', error);
+      return false;
+    }
   };
 
   return useMemo(() => ({
@@ -557,7 +628,11 @@ export const useApiClient = () => {
     search,
     getCommands,
     getTags,
-    createTag
+    createTag,
+    getGerritChanges,
+    getGerritConfig,
+    saveGerritConfig,
+    testGerritConnection
   }), [
     // Dependencies for all the functions
     openRepoDialogHook,
@@ -595,7 +670,11 @@ export const useApiClient = () => {
     searchHook,
     getCommandsHook,
     getTagsHook,
-    createTagHook
+    createTagHook,
+    getGerritChangesHook,
+    getGerritConfigHook,
+    saveGerritConfigHook,
+    testGerritConnectionHook
   ]);
 };
 
@@ -649,6 +728,7 @@ export const openRepoDialog = async (): Promise<string | null> => {
 // ============================================================================
 
 import type { FileNode } from './types/file-tree';
+import { invoke } from '@tauri-apps/api/tauri';
 
 export const getTasks = (type: 'pending' | 'watched'): Promise<Task[]> => {
   if (type === 'pending') {
@@ -693,9 +773,121 @@ export const getChecklist = (): Promise<ChecklistItem[]> =>
     { id: 'c2', text: 'Check Resource Closure', checked: true },
   ]);
 
+export const getTags = (): Promise<Tag[]> =>
+  Promise.resolve([
+    { id: '1', label: 'Bug', color: '#ef4444', usage_count: 5, created_at: '2025-01-01', updated_at: '2025-01-01' },
+    { id: '2', label: 'Feature', color: '#3b82f6', usage_count: 8, created_at: '2025-01-01', updated_at: '2025-01-01' },
+    { id: '3', label: 'Refactor', color: '#eab308', usage_count: 3, created_at: '2025-01-01', updated_at: '2025-01-01' },
+  ]);
+
+export const getFileTree = async (_baseBranch?: string, _headBranch?: string): Promise<FileNode[]> => {
+  return Promise.resolve([
+    {
+      id: 'src',
+      name: 'src',
+      path: '/src',
+      type: 'folder' as const,
+      status: 'none' as const,
+      exists: true,
+      children: [
+        { id: 'main', name: 'main', path: '/src/main', type: 'folder' as const, status: 'none' as const, exists: true },
+        { id: 'java', name: 'OrderService.java', path: 'src/main/OrderService.java', type: 'file' as const, status: 'modified' as const, stats: { added: 42, removed: 12 }, exists: true },
+        { id: 'scripts', name: 'scripts', path: '/src/scripts', type: 'folder' as const, status: 'none' as const, exists: true },
+        { id: 'py', name: 'analyzer.py', path: 'src/scripts/analyzer.py', type: 'file' as const, status: 'modified' as const, stats: { added: 120, removed: 5 }, exists: true },
+      ]
+    },
+    {
+      id: 'config',
+      name: 'config',
+      path: '/config',
+      type: 'folder' as const,
+      status: 'none' as const,
+      exists: true,
+      children: [
+        { id: 'yaml', name: 'config.yaml', path: 'config/config.yaml', type: 'file' as const, status: 'modified' as const, stats: { added: 5, removed: 2 }, exists: true }
+      ]
+    }
+  ]);
+};
+
 export const getLocalTasks = (): Promise<Task[]> =>
   Promise.resolve([
     { id: 'L1', title: 'Performance Analysis (Py/Go)', status: 'active', type: 'code' },
     { id: 'L2', title: 'DB Schema Audit', status: 'pending', type: 'sql' }
   ]);
 
+export const getGerritChanges = async (offset?: number, limit?: number): Promise<any[]> => {
+  try {
+    return await invoke('gerrit_get_gerrit_changes_simple', {
+      offset: offset || undefined,
+      limit: limit || undefined
+    });
+  } catch (error) {
+    console.error('Failed to get Gerrit changes:', error);
+    return [];
+  }
+};
+
+export const getGerritConfig = async (): Promise<any> => {
+  try {
+    const instances = await invoke<any[]>('gerrit_get_instances_simple');
+    if (instances && instances.length > 0) {
+      const active = instances.find((i: any) => i.is_active) || instances[0];
+      return {
+        url: active.url,
+        username: active.username,
+        name: active.name,
+        authType: 'http' 
+      };
+    }
+    return {
+      url: '',
+      username: '',
+      name: 'Default Gerrit',
+      authType: 'http'
+    };
+  } catch (error) {
+    console.error('Failed to get Gerrit config:', error);
+    return {
+        url: '',
+        username: '',
+        name: 'Default Gerrit',
+        authType: 'http'
+    };
+  }
+};
+
+export const saveGerritConfig = async (config: { url: string; username: string; password?: string; name?: string; token?: string; authType: string }): Promise<void> => {
+  console.log('saveGerritConfig called with:', config);
+  try {
+    const password = config.password || config.token || '';
+    
+    await invoke('gerrit_create_instance_simple', {
+        params: {
+            name: config.name || 'Gerrit Server',
+            url: config.url,
+            username: config.username,
+            password: password
+        }
+    });
+  } catch (error) {
+    console.error('Failed to save Gerrit config:', error);
+    throw error;
+  }
+};
+
+export const testGerritConnection = async (config: { url: string; username: string; password?: string; token?: string }): Promise<{ success: boolean; message: string; version?: string }> => {
+  console.log('testGerritConnection called with:', config);
+  try {
+    const password = config.password || config.token || '';
+    const result = await invoke<{ success: boolean; message: string; version?: string }>('gerrit_test_connection', {
+        url: config.url,
+        username: config.username,
+        password: password
+    });
+    return result;
+  } catch (error) {
+    console.error('Failed to test Gerrit connection:', error);
+    return { success: false, message: `Connection failed: ${error}`, version: undefined };
+  }
+};

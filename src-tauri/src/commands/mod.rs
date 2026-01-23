@@ -15,6 +15,9 @@ pub mod diff_engine_commands;
 pub mod file_tree_commands;
 pub mod comment_engine_commands;
 
+// Re-export general commands for convenience
+pub use general::*;
+
 #[cfg(test)]
 pub mod test_create_task_core;
 #[cfg(test)]

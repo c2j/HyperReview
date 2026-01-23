@@ -1,124 +1,128 @@
+use log::{error, info, warn};
+use rusqlite::{params, Connection};
 use std::path::Path;
-use rusqlite::{Connection, params};
-use log::{info, warn, error};
 
 use crate::errors::HyperReviewError;
 
 /// Database migration system for Gerrit integration schema
-pub struct MigrationRunner {
-    conn: Connection,
+pub struct MigrationRunner<'a> {
+    conn: &'a mut Connection,
 }
 
-impl MigrationRunner {
-    pub fn new(conn: Connection) -> Self {
+impl<'a> MigrationRunner<'a> {
+    pub fn new(conn: &'a mut Connection) -> Self {
         Self { conn }
     }
-    
+
     /// Run all migrations to bring database to latest schema
-    pub fn run_migrations(&mut self,
-    ) -> Result<(), HyperReviewError> {
+    pub fn run_migrations(&mut self) -> Result<(), HyperReviewError> {
         // Create migrations table if it doesn't exist
         self.create_migrations_table()?;
-        
+
         // Get current migration version
         let current_version = self.get_current_version()?;
         info!("Current database version: {}", current_version);
-        
+
         // Run migrations in order
         let migrations = self.get_migrations();
-        
+
         for (version, migration) in migrations {
             if version > current_version {
                 info!("Running migration V{}: {}", version, migration.name());
-                
+
                 // Start transaction
-                let tx = self.conn.unchecked_transaction()
-                    .map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
-                
+                let tx =
+                    self.conn
+                        .unchecked_transaction()
+                        .map_err(|e| HyperReviewError::Other {
+                            message: e.to_string(),
+                        })?;
+
                 // Run migration
                 migration.run(&tx)?;
-                
+
                 // Record migration
                 self.record_migration(version, migration.name())?;
-                
+
                 // Commit transaction
-                tx.commit()
-                    .map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
-                
+                tx.commit().map_err(|e| HyperReviewError::Other {
+                    message: e.to_string(),
+                })?;
+
                 info!("Migration V{} completed successfully", version);
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Create migrations tracking table
-    fn create_migrations_table(&self,
-    ) -> Result<(), HyperReviewError> {
-        self.conn.execute(
-            "CREATE TABLE IF NOT EXISTS schema_migrations (
+    fn create_migrations_table(&self) -> Result<(), HyperReviewError> {
+        self.conn
+            .execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations (
                 version INTEGER PRIMARY KEY,
                 name TEXT NOT NULL,
                 applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             )",
-            [],
-        ).map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
-        
+                [],
+            )
+            .map_err(|e| HyperReviewError::Other {
+                message: e.to_string(),
+            })?;
+
         Ok(())
     }
-    
+
     /// Get current database version
-    fn get_current_version(&self,
-    ) -> Result<i32, HyperReviewError> {
+    fn get_current_version(&self) -> Result<i32, HyperReviewError> {
         let version: rusqlite::Result<i32> = self.conn.query_row(
             "SELECT COALESCE(MAX(version), 0) FROM schema_migrations",
             [],
             |row| row.get(0),
         );
-        
+
         match version {
             Ok(v) => Ok(v),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(0),
-            Err(e) => Err(HyperReviewError::Other { message: e.to_string() }),
+            Err(e) => Err(HyperReviewError::Other {
+                message: e.to_string(),
+            }),
         }
     }
-    
+
     /// Record that a migration was applied
-    fn record_migration(
-        &self,
-        version: i32,
-        name: &str,
-    ) -> Result<(), HyperReviewError> {
-        self.conn.execute(
-            "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
-            params![version, name],
-        ).map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
-        
+    fn record_migration(&self, version: i32, name: &str) -> Result<(), HyperReviewError> {
+        self.conn
+            .execute(
+                "INSERT INTO schema_migrations (version, name) VALUES (?1, ?2)",
+                params![version, name],
+            )
+            .map_err(|e| HyperReviewError::Other {
+                message: e.to_string(),
+            })?;
+
         Ok(())
     }
-    
+
     /// Get all available migrations in order
-    fn get_migrations(&self,
-    ) -> Vec<(i32, Box<dyn Migration>)> {
+    fn get_migrations(&self) -> Vec<(i32, Box<dyn Migration>)> {
         vec![
             (1, Box::new(V001CreateGerritTables)),
             (2, Box::new(V002AddPerformanceIndexes)),
             (3, Box::new(V003AddSyncTracking)),
             (4, Box::new(V004AddEncryptionSupport)),
             (5, Box::new(V005AddOfflineCache)),
+            (6, Box::new(V006FixReviewSessions)),
         ]
     }
 }
 
 /// Trait for database migrations
 trait Migration {
-    fn name(&self,
-    ) -> &str;
-    
-    fn run(
-        &self,
-        conn: &Connection,
-    ) -> Result<(), HyperReviewError>;
+    fn name(&self) -> &str;
+
+    fn run(&self, conn: &Connection) -> Result<(), HyperReviewError>;
 }
 
 // ============================================================================
@@ -129,18 +133,14 @@ trait Migration {
 struct V001CreateGerritTables;
 
 impl Migration for V001CreateGerritTables {
-    fn name(&self,
-    ) -> &str {
+    fn name(&self) -> &str {
         "create_gerrit_tables"
     }
-    
-    fn run(
-        &self,
-        conn: &Connection,
-    ) -> Result<(), HyperReviewError> {
+
+    fn run(&self, conn: &Connection) -> Result<(), HyperReviewError> {
         conn.execute_batch(
             "-- Gerrit instances configuration
-            CREATE TABLE gerrit_instances (
+            CREATE TABLE IF NOT EXISTS gerrit_instances (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL UNIQUE,
                 url TEXT NOT NULL UNIQUE,
@@ -162,7 +162,7 @@ impl Migration for V001CreateGerritTables {
             );
             
             -- Gerrit changes
-            CREATE TABLE gerrit_changes (
+            CREATE TABLE IF NOT EXISTS gerrit_changes (
                 id TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
                 instance_id TEXT NOT NULL,
@@ -197,7 +197,7 @@ impl Migration for V001CreateGerritTables {
             );
             
             -- Patch sets (revisions)
-            CREATE TABLE patch_sets (
+            CREATE TABLE IF NOT EXISTS patch_sets (
                 id TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
                 revision_id TEXT NOT NULL,
@@ -222,7 +222,7 @@ impl Migration for V001CreateGerritTables {
             );
             
             -- Files within changes
-            CREATE TABLE gerrit_files (
+            CREATE TABLE IF NOT EXISTS gerrit_files (
                 id TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
                 patch_set_id TEXT NOT NULL,
@@ -252,7 +252,7 @@ impl Migration for V001CreateGerritTables {
             );
             
             -- Comments (both local and remote)
-            CREATE TABLE gerrit_comments (
+            CREATE TABLE IF NOT EXISTS gerrit_comments (
                 id TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
                 patch_set_id TEXT NOT NULL,
@@ -286,7 +286,7 @@ impl Migration for V001CreateGerritTables {
             );
             
             -- Review operations
-            CREATE TABLE gerrit_reviews (
+            CREATE TABLE IF NOT EXISTS gerrit_reviews (
                 id TEXT PRIMARY KEY,
                 change_id TEXT NOT NULL,
                 patch_set_id TEXT NOT NULL,
@@ -310,7 +310,7 @@ impl Migration for V001CreateGerritTables {
             );
             
             -- Sync status tracking
-            CREATE TABLE sync_status (
+            CREATE TABLE IF NOT EXISTS sync_status (
                 id TEXT PRIMARY KEY,
                 entity_type TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
@@ -331,7 +331,7 @@ impl Migration for V001CreateGerritTables {
             );
             
             -- Operation queue for offline sync
-            CREATE TABLE operation_queue (
+            CREATE TABLE IF NOT EXISTS operation_queue (
                 id TEXT PRIMARY KEY,
                 instance_id TEXT NOT NULL,
                 change_id TEXT NOT NULL,
@@ -355,7 +355,7 @@ impl Migration for V001CreateGerritTables {
                 CONSTRAINT chk_max_retries CHECK (max_retries BETWEEN 0 AND 10)
             );"
         ).map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
-        
+
         Ok(())
     }
 }
@@ -364,53 +364,53 @@ impl Migration for V001CreateGerritTables {
 struct V002AddPerformanceIndexes;
 
 impl Migration for V002AddPerformanceIndexes {
-    fn name(&self,
-    ) -> &str {
+    fn name(&self) -> &str {
         "add_performance_indexes"
     }
-    
-    fn run(
-        &self,
-        conn: &Connection,
-    ) -> Result<(), HyperReviewError> {
+
+    fn run(&self, conn: &Connection) -> Result<(), HyperReviewError> {
         conn.execute_batch(
             "-- Performance indexes for common queries
-            CREATE INDEX idx_gerrit_changes_instance ON gerrit_changes(instance_id);
-            CREATE INDEX idx_gerrit_changes_status ON gerrit_changes(status);
-            CREATE INDEX idx_gerrit_changes_project ON gerrit_changes(project);
-            CREATE INDEX idx_gerrit_changes_updated ON gerrit_changes(updated_at);
-            CREATE INDEX idx_gerrit_changes_import_status ON gerrit_changes(import_status);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_instance ON gerrit_changes(instance_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_status ON gerrit_changes(status);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_project ON gerrit_changes(project);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_updated ON gerrit_changes(updated_at);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_changes_import_status ON gerrit_changes(import_status);
             
-            CREATE INDEX idx_patch_sets_change ON patch_sets(change_id);
-            CREATE INDEX idx_patch_sets_current ON patch_sets(is_current);
+            CREATE INDEX IF NOT EXISTS idx_patch_sets_change ON patch_sets(change_id);
+            CREATE INDEX IF NOT EXISTS idx_patch_sets_current ON patch_sets(is_current);
             
-            CREATE INDEX idx_gerrit_files_change ON gerrit_files(change_id);
-            CREATE INDEX idx_gerrit_files_patch_set ON gerrit_files(patch_set_id);
-            CREATE INDEX idx_gerrit_files_path ON gerrit_files(file_path);
-            CREATE INDEX idx_gerrit_files_status ON gerrit_files(status);
-            CREATE INDEX idx_gerrit_files_reviewed ON gerrit_files(is_reviewed);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_files_change ON gerrit_files(change_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_files_patch_set ON gerrit_files(patch_set_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_files_path ON gerrit_files(file_path);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_files_status ON gerrit_files(status);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_files_reviewed ON gerrit_files(is_reviewed);
             
-            CREATE INDEX idx_gerrit_comments_change ON gerrit_comments(change_id);
-            CREATE INDEX idx_gerrit_comments_patch_set ON gerrit_comments(patch_set_id);
-            CREATE INDEX idx_gerrit_comments_file ON gerrit_comments(file_id);
-            CREATE INDEX idx_gerrit_comments_status ON gerrit_comments(status);
-            CREATE INDEX idx_gerrit_comments_line ON gerrit_comments(line_number);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_comments_change ON gerrit_comments(change_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_comments_patch_set ON gerrit_comments(patch_set_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_comments_file ON gerrit_comments(file_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_comments_status ON gerrit_comments(status);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_comments_line ON gerrit_comments(line_number);
             
-            CREATE INDEX idx_gerrit_reviews_change ON gerrit_reviews(change_id);
-            CREATE INDEX idx_gerrit_reviews_patch_set ON gerrit_reviews(patch_set_id);
-            CREATE INDEX idx_gerrit_reviews_status ON gerrit_reviews(status);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_reviews_change ON gerrit_reviews(change_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_reviews_patch_set ON gerrit_reviews(patch_set_id);
+            CREATE INDEX IF NOT EXISTS idx_gerrit_reviews_status ON gerrit_reviews(status);
             
-            CREATE INDEX idx_sync_status_entity ON sync_status(entity_type, entity_id);
-            CREATE INDEX idx_sync_status_status ON sync_status(sync_status);
-            CREATE INDEX idx_sync_status_retry ON sync_status(next_retry_at);
+            CREATE INDEX IF NOT EXISTS idx_sync_status_entity ON sync_status(entity_type, entity_id);
+            CREATE INDEX IF NOT EXISTS idx_sync_status_status ON sync_status(sync_status);
+            CREATE INDEX IF NOT EXISTS idx_sync_status_retry ON sync_status(next_retry_at);
             
-            CREATE INDEX idx_operation_queue_instance ON operation_queue(instance_id);
-            CREATE INDEX idx_operation_queue_change ON operation_queue(change_id);
-            CREATE INDEX idx_operation_queue_status ON operation_queue(status);
-            CREATE INDEX idx_operation_queue_priority ON operation_queue(priority);
-            CREATE INDEX idx_operation_queue_next_retry ON operation_queue(next_retry);"
-        ).map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
-        
+            CREATE INDEX IF NOT EXISTS idx_operation_queue_instance ON operation_queue(instance_id);
+            CREATE INDEX IF NOT EXISTS idx_operation_queue_change ON operation_queue(change_id);
+            CREATE INDEX IF NOT EXISTS idx_operation_queue_status ON operation_queue(status);
+            CREATE INDEX IF NOT EXISTS idx_operation_queue_priority ON operation_queue(priority);
+            CREATE INDEX IF NOT EXISTS idx_operation_queue_next_retry ON operation_queue(next_retry);"
+,
+        )
+        .map_err(|e| HyperReviewError::Other {
+            message: e.to_string(),
+        })?;
+
         Ok(())
     }
 }
@@ -419,15 +419,11 @@ impl Migration for V002AddPerformanceIndexes {
 struct V003AddSyncTracking;
 
 impl Migration for V003AddSyncTracking {
-    fn name(&self,
-    ) -> &str {
+    fn name(&self) -> &str {
         "add_sync_tracking"
     }
-    
-    fn run(
-        &self,
-        conn: &Connection,
-    ) -> Result<(), HyperReviewError> {
+
+    fn run(&self, conn: &Connection) -> Result<(), HyperReviewError> {
         conn.execute_batch(
             "-- Add sync statistics tracking
             ALTER TABLE gerrit_instances ADD COLUMN sync_stats TEXT DEFAULT '{}';
@@ -436,7 +432,7 @@ impl Migration for V003AddSyncTracking {
             ALTER TABLE gerrit_changes ADD COLUMN last_successful_sync TEXT;
             
             -- Add conflict resolution tracking
-            CREATE TABLE conflict_resolution (
+            CREATE TABLE IF NOT EXISTS conflict_resolution (
                 id TEXT PRIMARY KEY,
                 entity_type TEXT NOT NULL,
                 entity_id TEXT NOT NULL,
@@ -452,7 +448,7 @@ impl Migration for V003AddSyncTracking {
                 UNIQUE(entity_type, entity_id, conflict_type)
             );"
         ).map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
-        
+
         Ok(())
     }
 }
@@ -461,15 +457,11 @@ impl Migration for V003AddSyncTracking {
 struct V004AddEncryptionSupport;
 
 impl Migration for V004AddEncryptionSupport {
-    fn name(&self,
-    ) -> &str {
+    fn name(&self) -> &str {
         "add_encryption_support"
     }
-    
-    fn run(
-        &self,
-        conn: &Connection,
-    ) -> Result<(), HyperReviewError> {
+
+    fn run(&self, conn: &Connection) -> Result<(), HyperReviewError> {
         // Encryption support is handled at the application level
         // This migration is a placeholder for future database-level encryption
         info!("Encryption support is handled at application level");
@@ -481,18 +473,75 @@ impl Migration for V004AddEncryptionSupport {
 struct V005AddOfflineCache;
 
 impl Migration for V005AddOfflineCache {
-    fn name(&self,
-    ) -> &str {
+    fn name(&self) -> &str {
         "add_offline_cache"
     }
-    
-    fn run(
-        &self,
-        conn: &Connection,
-    ) -> Result<(), HyperReviewError> {
+
+    fn run(&self, conn: &Connection) -> Result<(), HyperReviewError> {
         // Offline cache is handled by the application
         // This migration is a placeholder for future database-level caching
         info!("Offline cache is handled at application level");
+        Ok(())
+    }
+}
+
+struct V006FixReviewSessions;
+
+impl Migration for V006FixReviewSessions {
+    fn name(&self) -> &str {
+        "fix_review_sessions_schema"
+    }
+
+    fn run(&self, conn: &Connection) -> Result<(), HyperReviewError> {
+        conn.execute("DROP TABLE IF EXISTS review_sessions", [])
+            .map_err(|e| HyperReviewError::Other {
+                message: e.to_string(),
+            })?;
+
+        conn.execute("DROP TABLE IF EXISTS change_files", [])
+            .map_err(|e| HyperReviewError::Other {
+                message: e.to_string(),
+            })?;
+
+        conn.execute(
+
+            "CREATE TABLE review_sessions (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                patch_set_number INTEGER NOT NULL,
+                reviewer_id TEXT NOT NULL,
+                mode TEXT NOT NULL, -- 'online', 'offline', 'hybrid'
+                status TEXT NOT NULL, -- 'in_progress', 'ready_for_submission', 'submitted', 'abandoned'
+                progress_data TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(id) ON DELETE CASCADE
+            )",
+            [],
+        ).map_err(|e| HyperReviewError::Other { message: e.to_string() })?;
+
+        conn.execute(
+            "CREATE TABLE change_files (
+                id TEXT PRIMARY KEY,
+                change_id TEXT NOT NULL,
+                patch_set_number INTEGER NOT NULL,
+                file_path TEXT NOT NULL,
+                change_type TEXT NOT NULL, -- 'added', 'modified', 'deleted', 'renamed', 'copied'
+                old_content TEXT,
+                new_content TEXT,
+                diff_data TEXT NOT NULL, -- JSON: unified diff and metadata
+                file_size INTEGER NOT NULL DEFAULT 0,
+                downloaded_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE(change_id, patch_set_number, file_path),
+                FOREIGN KEY (change_id) REFERENCES gerrit_changes(id) ON DELETE CASCADE
+            )",
+            [],
+        )
+        .map_err(|e| HyperReviewError::Other {
+            message: e.to_string(),
+        })?;
+
+        info!("Recreated review_sessions and change_files tables to fix schema");
         Ok(())
     }
 }

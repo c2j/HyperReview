@@ -1,33 +1,33 @@
 
 import React, { useState, useCallback, useEffect, useMemo } from 'react';
-import TitleBar from './components/TitleBar';
-import LocalToolBar from './components/toolbars/LocalToolBar';
-import RemoteToolBar from './components/toolbars/RemoteToolBar';
-import LocalTaskTree from './components/task-trees/LocalTaskTree';
-import RemoteTaskTree from './components/task-trees/RemoteTaskTree';
-import DiffView from './components/DiffView';
-import LocalRightPanel from './components/panels/LocalRightPanel';
-import RemoteRightPanel from './components/panels/RemoteRightPanel';
-import ActionBar from './components/ActionBar';
-import StatusBar from './components/StatusBar';
-import WelcomeView from './components/WelcomeView';
-import Modal from './components/Modal';
-import OpenRepoModal from './components/OpenRepoModal';
-import NewTaskModal from './components/NewTaskModal';
-import CommandPalette from './components/CommandPalette';
-import SettingsModal from './components/SettingsModal';
-import ReviewActionModal, { ReviewType } from './components/ReviewActionModal';
-import SubmitReviewModal from './components/SubmitReviewModal';
-import TagManagerModal from './components/TagManagerModal';
-import SyncStatusModal from './components/SyncStatusModal';
-import BranchCompareModal from './components/BranchCompareModal';
-import GerritImportModal from './components/GerritImportModal';
-import GerritServerModal from './components/GerritServerModal';
-import GerritInstanceSelector from './components/GerritInstanceSelector';
-import TourGuide from './components/TourGuide';
-import { useTranslation } from './i18n';
-import { getGerritConfig } from './api/client';
-import { simpleGerritService, SimpleChange } from './services/gerrit-simple-service';
+import TitleBar from '../components/TitleBar';
+import LocalToolBar from '../components/toolbars/LocalToolBar';
+import RemoteToolBar from '../components/toolbars/RemoteToolBar';
+import LocalTaskTree from '../components/task-trees/LocalTaskTree';
+import RemoteTaskTree from '../components/task-trees/RemoteTaskTree';
+import DiffView from '../components/DiffView';
+import LocalRightPanel from '../components/panels/LocalRightPanel';
+import RemoteRightPanel from '../components/panels/RemoteRightPanel';
+import ActionBar from '../components/ActionBar';
+import StatusBar from '../components/StatusBar';
+import WelcomeView from '../components/WelcomeView';
+import Modal from '../components/Modal';
+import OpenRepoModal from '../components/OpenRepoModal';
+import NewTaskModal from '../components/NewTaskModal';
+import CommandPalette from '../components/CommandPalette';
+import SettingsModal from '../components/SettingsModal';
+import ReviewActionModal, { ReviewType } from '../components/ReviewActionModal';
+import SubmitReviewModal from '../components/SubmitReviewModal';
+import TagManagerModal from '../components/TagManagerModal';
+import SyncStatusModal from '../components/SyncStatusModal';
+import BranchCompareModal from '../components/BranchCompareModal';
+import GerritImportModal from '../components/GerritImportModal';
+import GerritServerModal from '../components/GerritServerModal';
+import TourGuide from '../components/TourGuide';
+import { useTranslation } from '../i18n';
+import { getGerritConfig } from '../api/client';
+import { simpleGerritService } from '../services/gerrit-simple-service';
+import type { SimpleChange } from '../services/gerrit-simple-service';
 
 const App: React.FC = () => {
   const { t, fontSize, ligatures, vimMode } = useTranslation();
@@ -41,32 +41,8 @@ const App: React.FC = () => {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [diffContext, setDiffContext] = useState({ base: 'master', head: 'feature/payment-retry' });
 
-  const handleSelectFile = (file: string | null) => {
-    setSelectedFile(file);
-    if (file) {
-      setActiveFilePath(file);
-    }
-  };
-
-  const handleGerritImport = (change: SimpleChange) => {
-    setGerritImportOpen(false);
-    setActiveTaskId(`gerrit-${change.change_number}`);
-    setIsRepoLoaded(true);
-    setMode('remote');
-    showNotification(`Gerrit Change #${change.change_number} Imported Successfully`);
-  };
-
-  const startGerritFlow = async () => {
-      const instances = await simpleGerritService.getInstances();
-      if (instances.length === 0) {
-          setGerritServerOpen(true);
-      } else {
-          setGerritInstanceSelectorOpen(true);
-      }
-  };
-
   const [activeFilePath, setActiveFilePath] = useState('src/main/OrderService.java');
-  
+
   const [leftWidth, setLeftWidth] = useState(260);
   const [rightWidth, setRightWidth] = useState(300);
   const [showLeft, setShowLeft] = useState(true);
@@ -75,7 +51,6 @@ const App: React.FC = () => {
 
   const [openRepoModalOpen, setOpenRepoModalOpen] = useState(false);
   const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
-  const [gerritInstanceSelectorOpen, setGerritInstanceSelectorOpen] = useState(false);
   const [gerritImportOpen, setGerritImportOpen] = useState(false);
   const [gerritServerOpen, setGerritServerOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -87,6 +62,20 @@ const App: React.FC = () => {
   const [branchCompareModalOpen, setBranchCompareModalOpen] = useState(false);
   const [isInitialSetup, setIsInitialSetup] = useState(false);
   const [tourOpen, setTourOpen] = useState(false);
+
+  const [leftWidth, setLeftWidth] = useState(260);
+  const [rightWidth, setRightWidth] = useState(300);
+  const [showLeft, setShowLeft] = useState(true);
+  const [showRight, setShowRight] = useState(true);
+  const [isResizing, setIsResizing] = useState<'left' | 'right' | null>(null);
+
+  const [openRepoModalOpen, setOpenRepoModalOpen] = useState(false);
+  const [newTaskModalOpen, setNewTaskModalOpen] = useState(false);
+  const [gerritImportOpen, setGerritImportOpen] = useState(false);
+  const [gerritServerOpen, setGerritServerOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [submitOpen, setSubmitOpen] = useState(false);
 
   // 初始化检查 Gerrit 配置
   useEffect(() => {
@@ -134,10 +123,32 @@ const App: React.FC = () => {
 
   const handleModeChange = (newMode: 'local' | 'remote') => { 
       setMode(newMode); 
-      showNotification(`Switched to ${newMode.toUpperCase()} mode`); 
+      showNotification(`Switched to ${newMode.toUpperCase()} mode`);
   };
-  
 
+  const handleSelectFile = (file: string | null) => {
+    setSelectedFile(file);
+    if (file) {
+      setActiveFilePath(file);
+    }
+  };
+
+  const startGerritFlow = async () => {
+      const config = await getGerritConfig();
+      if (!config || !config.url || config.url.length < 5) {
+          setGerritServerOpen(true);
+      } else {
+          setGerritImportOpen(true);
+      }
+  };
+
+  const handleGerritImport = (change: SimpleChange) => {
+      setGerritImportOpen(false);
+      setActiveTaskId(`gerrit-${change.id}`);
+      setIsRepoLoaded(true);
+      setMode('remote');
+      showNotification(`Gerrit Change #${change.id} Imported Successfully`);
+  };
 
   const handleAction = (msg: string) => {
     if (msg === "Global Search Activated") { setSearchOpen(true); return; }
@@ -176,19 +187,19 @@ const App: React.FC = () => {
           <WelcomeView 
             onOpenLocal={() => setOpenRepoModalOpen(true)} 
             onImportRemote={startGerritFlow} 
-             isGerritConfigured={isGerritConfigured}
-             onSelectHistory={(path, m) => {
-                 setSelectedFile(path);
-                 setMode(m);
-                 setIsRepoLoaded(true);
-                 showNotification(`Loaded ${path}`);
-             }}
+            isGerritConfigured={isGerritConfigured}
+            onSelectHistory={(path, m) => {
+                setSelectedRepoPath(path);
+                setMode(m);
+                setIsRepoLoaded(true);
+                showNotification(`Loaded ${path}`);
+            }}
           />
       ) : (
           <div className="flex-1 flex overflow-hidden relative pb-[28px]"> 
             {showLeft && (
               <div style={{ width: leftWidth }} className="shrink-0 h-full flex flex-col transition-all duration-300">
-                 {mode === 'remote' ? (
+                {mode === 'remote' ? (
                     <RemoteTaskTree activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} onAction={handleAction} />
                 ) : (
                     <LocalTaskTree activeTaskId={activeTaskId} onSelectTask={setActiveTaskId} onAction={handleAction} onSelectFile={handleSelectFile} selectedFile={selectedFile} />
@@ -216,25 +227,15 @@ const App: React.FC = () => {
       <div className="absolute bottom-0 w-full z-50"><StatusBar mode={mode} /></div>
 
       {/* Modals remain shared but use mode inside */}
-      <Modal isOpen={gerritInstanceSelectorOpen} onClose={() => setGerritInstanceSelectorOpen(false)} title="Select Gerrit Instance">
-        <GerritInstanceSelector
-            onClose={() => setGerritInstanceSelectorOpen(false)}
-            onSelectInstance={() => setGerritImportOpen(true)}
-            onConfigureNew={() => {
-                setGerritInstanceSelectorOpen(false);
-                setGerritServerOpen(true);
-            }}
-        />
-      </Modal>
       <Modal isOpen={gerritServerOpen} onClose={() => setGerritServerOpen(false)} title="Gerrit Server Configuration">
-        <GerritServerModal
-            onClose={() => setGerritServerOpen(false)}
-            onSuccess={() => {
-                setGerritServerOpen(false);
+        <GerritServerModal 
+            onClose={() => setGerritServerOpen(false)} 
+            onSuccess={() => { 
+                setGerritServerOpen(false); 
                 setIsGerritConfigured(true);
-                setGerritImportOpen(true);
-                showNotification("Configuration Saved.");
-            }}
+                setGerritImportOpen(true); 
+                showNotification("Configuration Saved."); 
+            }} 
         />
       </Modal>
       <Modal isOpen={gerritImportOpen} onClose={() => setGerritImportOpen(false)} title="Import from Gerrit"><GerritImportModal onClose={() => setGerritImportOpen(false)} onImport={handleGerritImport} /></Modal>
@@ -252,4 +253,5 @@ const App: React.FC = () => {
     </div>
   );
 };
+
 export default App;

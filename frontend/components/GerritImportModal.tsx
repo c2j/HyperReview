@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { Search, GitPullRequest, Loader2 } from 'lucide-react';
+import { useTranslation } from '../i18n';
 import { simpleGerritService, SimpleChange } from '../services/gerrit-simple-service';
 
 interface GerritImportModalProps {
@@ -8,6 +9,7 @@ interface GerritImportModalProps {
 }
 
 const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport }) => {
+  const { t } = useTranslation();
   const [importType, setImportType] = useState<'id' | 'search'>('id');
   const [changeId, setChangeId] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
@@ -68,7 +70,7 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
         >
           <div className="flex items-center gap-2">
             <GitPullRequest size={14} />
-            <span>Import by ID</span>
+            <span>{t('gerrit.import.import_by_id')}</span>
           </div>
         </button>
         <button
@@ -81,16 +83,16 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
         >
           <div className="flex items-center gap-2">
             <Search size={14} />
-            <span>Search Changes</span>
+            <span>{t('gerrit.import.search_changes')}</span>
           </div>
         </button>
       </div>
 
-      {importType === 'id' && (
+       {importType === 'id' && (
         <>
           <div>
             <label className="text-xs text-gray-400 mb-2 block font-medium">
-              Gerrit Change ID
+              {t('gerrit.import.change_id')}
             </label>
             <div className="relative">
               <GitPullRequest
@@ -101,7 +103,7 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
                 type="text"
                 value={changeId}
                 onChange={(e) => setChangeId(e.target.value)}
-                placeholder="e.g. #12345 or Iabc123..."
+                placeholder={t('gerrit.import.change_id_placeholder')}
                 className="w-full bg-editor-line/50 border border-editor-line rounded pl-9 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-editor-accent transition-colors"
                 autoFocus
                 onKeyDown={(e) => {
@@ -112,7 +114,7 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
               />
             </div>
             <div className="text-[10px] text-gray-500 mt-1">
-              Enter a Gerrit Change ID to import the change with all files and comments
+              {t('gerrit.import.change_id_hint')}
             </div>
           </div>
 
@@ -121,7 +123,7 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
               onClick={onClose}
               className="px-4 py-1.5 rounded text-xs hover:bg-editor-line text-gray-300 transition-colors"
             >
-              Cancel
+              {t('gerrit.import.cancel')}
             </button>
             <button
               onClick={handleImportById}
@@ -131,21 +133,21 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
               {isImporting ? (
                 <>
                   <Loader2 size={14} className="animate-spin" />
-                  Importing...
+                  {t('gerrit.import.importing')}
                 </>
               ) : (
-                'Import Change'
+                t('gerrit.import.import_change')
               )}
-            </button>
+             </button>
           </div>
         </>
       )}
 
-      {importType === 'search' && (
+       {importType === 'search' && (
         <>
           <div>
             <label className="text-xs text-gray-400 mb-2 block font-medium">
-              Search Gerrit Changes
+              {t('gerrit.import.search_gerrit_changes')}
             </label>
             <div className="relative">
               <Search
@@ -156,7 +158,7 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
                 type="text"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="e.g. status:open project:hyperreview owner:alice"
+                placeholder={t('gerrit.import.search_placeholder')}
                 className="w-full bg-editor-line/50 border border-editor-line rounded pl-9 pr-3 py-2 text-sm text-white placeholder-gray-500 focus:outline-none focus:border-editor-accent transition-colors"
                 autoFocus
                 onKeyDown={(e) => {
@@ -167,7 +169,7 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
               />
             </div>
             <div className="text-[10px] text-gray-500 mt-1">
-              Use Gerrit query syntax to search for changes (e.g., status:open, project:name)
+              {t('gerrit.import.search_hint')}
             </div>
           </div>
 
@@ -179,17 +181,17 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
             {isSearching ? (
               <>
                 <Loader2 size={14} className="animate-spin" />
-                Searching...
+                {t('gerrit.import.searching')}
               </>
             ) : (
-              'Search'
+              t('gerrit.import.search')
             )}
           </button>
 
           {searchResults.length > 0 && (
             <div className="max-h-[200px] overflow-y-auto">
               <div className="text-xs text-gray-400 mb-2 font-semibold">
-                {searchResults.length} change(s) found
+                {searchResults.length} {t('gerrit.import.changes_found')}
               </div>
               <div className="space-y-2">
                 {searchResults.map((change) => (
@@ -204,9 +206,9 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
                           #{change.change_number}: {change.subject}
                         </div>
                         <div className="flex items-center gap-3 text-[10px] text-gray-500">
-                          <span>Project: {change.project}</span>
-                          <span>Owner: {change.owner}</span>
-                          <span>Branch: {change.branch}</span>
+                          <span>{t('gerrit.import.project')}: {change.project}</span>
+                          <span>{t('gerrit.import.owner')}: {change.owner}</span>
+                          <span>{t('gerrit.import.branch')}: {change.branch}</span>
                           <span>
                             {change.insertions > 0 && (
                               <span className="text-green-500">+{change.insertions}</span>
@@ -229,9 +231,9 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
 
           {searchResults.length === 0 && searchQuery && !isSearching && (
             <div className="text-center py-4">
-              <div className="text-sm text-gray-400">No changes found</div>
+              <div className="text-sm text-gray-400">{t('gerrit.import.no_changes_found')}</div>
               <div className="text-xs text-gray-500 mt-1">
-                Try a different search query or check your connection settings
+                {t('gerrit.import.try_different_query')}
               </div>
             </div>
           )}
@@ -241,7 +243,7 @@ const GerritImportModal: React.FC<GerritImportModalProps> = ({ onClose, onImport
               onClick={onClose}
               className="px-4 py-1.5 rounded text-xs hover:bg-editor-line text-gray-300 transition-colors"
             >
-              Cancel
+              {t('gerrit.import.cancel')}
             </button>
           </div>
         </>
