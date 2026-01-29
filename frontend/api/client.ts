@@ -15,7 +15,6 @@ import type {
   ReviewStats,
   ChecklistItem,
   Tag,
-  SearchResult,
   ReviewTemplate,
   QualityGate,
   ReviewGuideItem
@@ -482,75 +481,8 @@ export const useApiClient = () => {
     return readFileContentFromCommitHook({ file_path: filePath, commit_hash: commitHash });
   };
 
-  const getGerritChangesHook = useGetGerritChanges();
-  const getGerritFileContentHook = useGetGerritFileContent();
-
   const getGerritChanges = async (offset?: number, limit?: number): Promise<any[]> => {
     return getGerritChangesHook({ offset, limit });
-  };
-
-  const getGerritFileContent = async (changeId: string, patchSetNumber: number, filePath: string): Promise<string> => {
-    return getGerritFileContentHook({
-      changeId,
-      patchSetNumber,
-      filePath
-    });
-  };
-
-  const readFileContentFromCommit = async (filePath: string, commitHash: string): Promise<string> => {
-    return readFileContentFromCommitHook({ file_path: filePath, commit_hash: commitHash });
-  };
-
-  const analyzeComplexity = async (filePath: string): Promise<any> => {
-    return analyzeComplexityHook({ file_path: filePath });
-  };
-
-  const scanSecurity = async (filePath: string): Promise<any[]> => {
-    return scanSecurityHook({ file_path: filePath });
-  };
-
-  // External Integration
-  const submitReview = async (
-    system: string,
-    reviewData: any
-  ): Promise<any> => {
-    return submitReviewHook({ system, review_data: reviewData });
-  };
-
-  const syncRepo = async (): Promise<any> => {
-    return syncRepoHook();
-  };
-
-  // Search and Configuration
-  const search = async (query: string): Promise<SearchResult[]> => {
-    return searchHook({ query });
-  };
-
-  const getCommands = async (): Promise<any[]> => {
-    return getCommandsHook();
-  };
-
-  const getTags = async (): Promise<Tag[]> => {
-    return getTagsHook();
-  };
-
-  const createTag = async (
-    label: string,
-    color: string
-  ): Promise<Tag> => {
-    return createTagHook({ label, color });
-  };
-
-  const getGerritChanges = async (offset?: number, limit?: number): Promise<any[]> => {
-    return getGerritChangesHook({ offset, limit });
-  };
-
-  const getGerritFileContent = async (changeId: string, patchSetNumber: number, filePath: string): Promise<string> => {
-    return getGerritFileContentHook({
-      changeId,
-      patchSetNumber,
-      filePath
-    });
   };
 
   const getGerritConfig = async (): Promise<any> => {
@@ -611,29 +543,26 @@ export const useApiClient = () => {
     getQualityGates,
     getReviewTemplates,
     createTemplate,
-    // Analysis
-    getHeatmap,
-    getChecklist,
-    getBlame,
-    getReviewGuide,
-    getFileTree,
-    readFileContent,
-    readFileContentFromCommit,
-    analyzeComplexity,
-    scanSecurity,
-    // External
-    submitReview,
-    syncRepo,
-    // Search
-    search,
-    getCommands,
-    getTags,
-    createTag,
-    getGerritChanges,
-    getGerritConfig,
-    saveGerritConfig,
-    testGerritConnection
-  }), [
+      // Analysis
+      getHeatmap,
+      getChecklist,
+      getBlame,
+      // External
+      getGerritChanges,
+      getGerritConfig,
+      saveGerritConfig,
+      testGerritConnection,
+      // Search and Tags
+      search: searchHook,
+      getCommands: getCommandsHook,
+      getTags: getTagsHook,
+      createTag: createTagHook,
+      // Analysis functions
+      analyzeComplexity: analyzeComplexityHook,
+      scanSecurity: scanSecurityHook,
+      submitReview: submitReviewHook,
+      syncRepo: syncRepoHook
+   }), [
     // Dependencies for all the functions
     openRepoDialogHook,
     getRecentReposHook,

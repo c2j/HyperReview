@@ -48,8 +48,8 @@ impl GerritClient {
             .connect_timeout(Duration::from_secs(10))
             .user_agent("HyperReview/1.0 GerritClient")
             .build()
-            .unwrap_or_else(|_| Client::new());
-
+            .expect("Failed to build HTTP client");
+        
         Self {
             base_url: base_url.trim_end_matches('/').to_string(),
             client,
@@ -57,6 +57,21 @@ impl GerritClient {
             http_password: None,
             retry_config: RetryConfig::default(),
         }
+    }
+    
+    pub fn with_timeout(mut self, timeout_secs: u64) -> Self {
+        self.client = ClientBuilder::new()
+            .timeout(Duration::from_secs(timeout_secs))
+            .connect_timeout(Duration::from_secs(10))
+            .user_agent("HyperReview/1.0 GerritClient")
+            .build()
+            .expect("Failed to build HTTP client with custom timeout");
+        self
+    }
+    
+    pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
+        self.retry_config = retry_config;
+        self
     }
 
     pub fn base_url(&self) -> &str {
@@ -82,51 +97,44 @@ impl GerritClient {
         info!("Testing connection to Gerrit: {}", self.base_url);
 
         let url = format!("{}/config/server/info", self.base_url);
-        let username = self.username.clone();
-        let password = self.http_password.clone();
+        
+        let mut request = self.client.get(&url);
+        
+        // Add basic auth if credentials are available
+        if let (Some(user), Some(pass)) = (&self.username, &self.http_password) {
+            request = request.basic_auth(user, Some(pass));
+        }
 
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
-            
-            // Add basic auth if credentials are available
-            if let (Some(user), Some(pass)) = (username, password) {
-                request = request.basic_auth(user, Some(pass));
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+
+        if status.is_success() {
+            let cleaned = Self::clean_gerrit_json(&body)?;
+            let json_value: Value = serde_json::from_str(&cleaned)?;
+            let server_info = json_value.as_object().and_then(|v| v.get("gerrit_version"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let mut features = vec![];
+            if json_value.as_object().and_then(|v| v.get("auth")).is_some() {
+                features.push("Authentication".to_string());
+            }
+            if json_value.as_object().and_then(|v| v.get("default_theme")).is_some() {
+                features.push("REST API".to_string());
             }
 
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
-
-            if status.is_success() {
-                let cleaned = Self::clean_gerrit_json(&body)?;
-                let json_value: Value = serde_json::from_str(&cleaned)?;
-                let server_info = json_value.as_object().and_then(|v| v.get("gerrit_version"))
-                    .and_then(|v| v.as_str())
-                    .map(|s| s.to_string());
-
-                let mut features = vec![];
-                if json_value.as_object().and_then(|v| v.get("auth")).is_some() {
-                    features.push("Authentication".to_string());
-                }
-                if json_value.as_object().and_then(|v| v.get("default_theme")).is_some() {
-                    features.push("REST API".to_string());
-                }
-
-                Ok(ConnectionTestResult {
-                    success: true,
-                    gerrit_version: server_info,
-                    error_message: None,
-                    supported_features: features,
-                })
-            } else {
-                let error_msg = format!("Gerrit API error {}: {}", status, body);
-                error!("{}", error_msg);
-                Err(HyperReviewError::other(error_msg))
-            }
-        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
-
-        result
+            Ok(ConnectionTestResult {
+                success: true,
+                gerrit_version: server_info,
+                error_message: None,
+                supported_features: features,
+            })
+        } else {
+            let error_msg = format!("Gerrit API error {}: {}", status, body);
+            error!("{}", error_msg);
+            Err(HyperReviewError::other(error_msg))
+        }
     }
 
     pub async fn get_change(
@@ -139,39 +147,31 @@ impl GerritClient {
             "/changes/{}?o=CURRENT_REVISION&o=DETAILED_ACCOUNTS&o=DETAILED_LABELS",
             change_number
         ));
-        let username = self.username.clone();
-        let password = self.http_password.clone();
 
-        let result = tokio::task::spawn_blocking(move || {
-            info!("GET to Gerrit: {}", url);
+        let mut request = self.client.get(&url);
 
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
+        // Add basic auth if credentials are available
+        if let (Some(user), Some(pass)) = (&self.username, &self.http_password) {
+            request = request.basic_auth(user, Some(pass));
+        }
 
-            // Add basic auth if credentials are available
-            if let (Some(user), Some(pass)) = (username, password) {
-                request = request.basic_auth(user, Some(pass));
-            }
+        info!("GET to Gerrit: {}", url);
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
 
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
+        info!("Response status: {}, body length: {}", status, body.len());
 
-            info!("Response status: {}, body length: {}", status, body.len());
-
-            if status.is_success() {
-                let cleaned = Self::clean_gerrit_json(&body)?;
-                let change: GerritChangeInfo = serde_json::from_str(&cleaned)?;
-                info!("Successfully parsed change: {}", change.subject);
-                Ok(change)
-            } else {
-                let error_msg = format!("Gerrit API error {}: {}", status, body);
-                error!("{}", error_msg);
-                Err(HyperReviewError::other(error_msg))
-            }
-        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
-
-        result
+        if status.is_success() {
+            let cleaned = Self::clean_gerrit_json(&body)?;
+            let change: GerritChangeInfo = serde_json::from_str(&cleaned)?;
+            info!("Successfully parsed change: {}", change.subject);
+            Ok(change)
+        } else {
+            let error_msg = format!("Gerrit API error {}: {}", status, body);
+            error!("{}", error_msg);
+            Err(HyperReviewError::other(error_msg))
+        }
     }
 
     fn clean_gerrit_json(json_text: &str) -> Result<String, HyperReviewError> {
@@ -217,7 +217,6 @@ pub struct GerritChangeInfo {
 }
 
 impl GerritClient {
-    /// Get file list for a specific revision
     pub async fn get_revision_files(
         &self,
         change_id: &str,
@@ -226,35 +225,28 @@ impl GerritClient {
         info!("Getting files for change {} revision {}", change_id, revision_id);
         
         let url = self.get_api_url(&format!("/changes/{}/revisions/{}/files/", change_id, revision_id));
-        let username = self.username.clone();
-        let password = self.http_password.clone();
         
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
-            
-            // Add basic auth if credentials are available
-            if let (Some(user), Some(pass)) = (username, password) {
-                request = request.basic_auth(user, Some(pass));
-            }
-            
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
-            
-            if status.is_success() {
-                let cleaned = Self::clean_gerrit_json(&body)?;
-                let files: std::collections::HashMap<String, GerritFileInfo> = serde_json::from_str(&cleaned)?;
-                info!("Retrieved {} files", files.len());
-                Ok(files)
-            } else {
-                let error_msg = format!("Failed to get files: HTTP {}: {}", status, body);
-                error!("{}", error_msg);
-                Err(HyperReviewError::other(error_msg))
-            }
-        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
+        let mut request = self.client.get(&url);
         
-        result
+        // Add basic auth if credentials are available
+        if let (Some(user), Some(pass)) = (&self.username, &self.http_password) {
+            request = request.basic_auth(user, Some(pass));
+        }
+        
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        
+        if status.is_success() {
+            let cleaned = Self::clean_gerrit_json(&body)?;
+            let files: std::collections::HashMap<String, GerritFileInfo> = serde_json::from_str(&cleaned)?;
+            info!("Retrieved {} files", files.len());
+            Ok(files)
+        } else {
+            let error_msg = format!("Failed to get files: HTTP {}: {}", status, body);
+            error!("{}", error_msg);
+            Err(HyperReviewError::other(error_msg))
+        }
     }
 
     /// Get file content for a specific revision
@@ -269,21 +261,17 @@ impl GerritClient {
         let encoded_path = urlencoding::encode(file_path);
         let url = self.get_api_url(&format!("/changes/{}/revisions/{}/files/{}/content", 
             change_id, revision_id, encoded_path));
-        let username = self.username.clone();
-        let password = self.http_password.clone();
         
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
-            
-            // Add basic auth if credentials are available
-            if let (Some(user), Some(pass)) = (username, password) {
-                request = request.basic_auth(user, Some(pass));
-            }
-            
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
+        let mut request = self.client.get(&url);
+        
+        // Add basic auth if credentials are available
+        if let (Some(user), Some(pass)) = (&self.username, &self.http_password) {
+            request = request.basic_auth(user, Some(pass));
+        }
+        
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
             
             if status.is_success() {
                 // Gerrit returns base64 encoded content
@@ -300,9 +288,6 @@ impl GerritClient {
                 error!("{}", error_msg);
                 Err(HyperReviewError::other(error_msg))
             }
-        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
-        
-        result
     }
 
     /// Get diff for a file between revisions
@@ -324,37 +309,30 @@ impl GerritClient {
         let url = self.get_api_url(&path);
         
         let file_path = file_path.to_string();
-        let username = self.username.clone();
-        let password = self.http_password.clone();
         
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
-            
-            // Add basic auth if credentials are available
-            if let (Some(user), Some(pass)) = (username, password) {
-                request = request.basic_auth(user, Some(pass));
-            }
-            
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
-            
-            if status.is_success() {
-                let cleaned = Self::clean_gerrit_json(&body)?;
-                let diff_info: GerritDiffInfo = serde_json::from_str(&cleaned)?;
-                
-                // Convert Gerrit diff format to unified diff
-                let unified_diff = Self::convert_gerrit_diff_to_unified(&diff_info, &file_path);
-                Ok(unified_diff)
-            } else {
-                let error_msg = format!("Failed to get file diff: HTTP {}: {}", status, body);
-                error!("{}", error_msg);
-                Err(HyperReviewError::other(error_msg))
-            }
-        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
+        let mut request = self.client.get(&url);
         
-        result
+        // Add basic auth if credentials are available
+        if let (Some(user), Some(pass)) = (&self.username, &self.http_password) {
+            request = request.basic_auth(user, Some(pass));
+        }
+        
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        
+        if status.is_success() {
+            let cleaned = Self::clean_gerrit_json(&body)?;
+            let diff_info: GerritDiffInfo = serde_json::from_str(&cleaned)?;
+            
+            // Convert Gerrit diff format to unified diff
+            let unified_diff = Self::convert_gerrit_diff_to_unified(&diff_info, &file_path);
+            Ok(unified_diff)
+        } else {
+            let error_msg = format!("Failed to get file diff: HTTP {}: {}", status, body);
+            error!("{}", error_msg);
+            Err(HyperReviewError::other(error_msg))
+        }
     }
 
     /// Convert Gerrit diff format to unified diff format
@@ -448,73 +426,58 @@ impl GerritClient {
 
         let url = self.get_api_url(&url_path);
         
-        let username = self.username.clone();
-        let password = self.http_password.clone();
+        let mut request = self.client.get(&url);
         
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.get(&url);
-            
-            // Add basic auth if credentials are available
-            if let (Some(user), Some(pass)) = (username, password) {
-                request = request.basic_auth(user, Some(pass));
-            }
-            
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
-            
-            if status.is_success() {
-                let cleaned = Self::clean_gerrit_json(&body)?;
-                let changes: Vec<GerritChangeInfo> = serde_json::from_str(&cleaned)?;
-                info!("Found {} changes", changes.len());
-                Ok(changes)
-            } else {
-                let error_msg = format!("Failed to search changes: HTTP {}: {}", status, body);
-                error!("{}", error_msg);
-                Err(HyperReviewError::other(error_msg))
-            }
-        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
+        // Add basic auth if credentials are available
+        if let (Some(user), Some(pass)) = (&self.username, &self.http_password) {
+            request = request.basic_auth(user, Some(pass));
+        }
         
-        result
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        
+        if status.is_success() {
+            let cleaned = Self::clean_gerrit_json(&body)?;
+            let changes: Vec<GerritChangeInfo> = serde_json::from_str(&cleaned)?;
+            info!("Found {} changes", changes.len());
+            Ok(changes)
+        } else {
+            let error_msg = format!("Failed to search changes: HTTP {}: {}", status, body);
+            error!("{}", error_msg);
+            Err(HyperReviewError::other(error_msg))
+        }
     }
     
     /// Submit a review
-    pub async fn submit_review(&self, change_id: &str, review: &ReviewInput) -> Result<(), HyperReviewError> {
+    pub async fn submit_review(&self, change_id: &str, review: &ReviewInput
+    ) -> Result<(), HyperReviewError> {
         info!("Submitting review for change: {}", change_id);
         
         let url = self.get_api_url(&format!("/changes/{}/revisions/current/review", change_id));
         let review_json = serde_json::to_string(review)?;
         
-        let username = self.username.clone();
-        let password = self.http_password.clone();
+        let mut request = self.client.post(&url)
+            .header("Content-Type", "application/json")
+            .body(review_json);
         
-        let result = tokio::task::spawn_blocking(move || {
-            let client = reqwest::blocking::Client::new();
-            let mut request = client.post(&url)
-                .header("Content-Type", "application/json")
-                .body(review_json);
-            
-            // Add basic auth if credentials are available
-            if let (Some(user), Some(pass)) = (username, password) {
-                request = request.basic_auth(user, Some(pass));
-            }
-            
-            let response = request.send()?;
-            let status = response.status();
-            let body = response.text()?;
-            
-            if status.is_success() {
-                info!("Review submitted successfully");
-                Ok(())
-            } else {
-                let error_msg = format!("Failed to submit review: HTTP {}: {}", status, body);
-                error!("{}", error_msg);
-                Err(HyperReviewError::other(error_msg))
-            }
-        }).await.map_err(|e| HyperReviewError::other(format!("Task spawn failed: {}", e)))?;
+        // Add basic auth if credentials are available
+        if let (Some(user), Some(pass)) = (&self.username, &self.http_password) {
+            request = request.basic_auth(user, Some(pass));
+        }
         
-        result
+        let response = request.send().await?;
+        let status = response.status();
+        let body = response.text().await?;
+        
+        if status.is_success() {
+            info!("Review submitted successfully");
+            Ok(())
+        } else {
+            let error_msg = format!("Failed to submit review: HTTP {}: {}", status, body);
+            error!("{}", error_msg);
+            Err(HyperReviewError::other(error_msg))
+        }
     }
 }
 

@@ -1,148 +1,86 @@
 import { create } from 'zustand';
+import { tauriClient } from '../services/tauri-client';
 import type {
-  GerritInstance,
-  GerritChange,
-  GerritComment,
-  GerritReview
+  GerritChange
 } from '../api/types/gerrit';
 
-// Gerrit Instances state
-interface GerritInstanceState {
-  instances: GerritInstance[];
-  activeInstance: GerritInstance | null;
+// 共享存储用于协调多个组件访问
+export interface GerritChangesStore {
+  gerritChanges: GerritChange[];
   loading: boolean;
   error: string | null;
-
-  // Actions
-  setInstances: (instances: GerritInstance[]) => void;
-  setActiveInstance: (instance: GerritInstance | null) => void;
-  addInstance: (instance: GerritInstance) => void;
-  updateInstance: (id: string, updates: Partial<GerritInstance>) => void;
-  removeInstance: (id: string) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
-  clearError: () => void;
+  lastFetch: number;
+  fetchChanges: (offset?: number, limit?: number) => Promise<void>;
+  getChangeFileContent: (changeId: string, patchSetNumber: number, filePath: string) => Promise<string>;
+  clearData: () => void;
 }
 
-// Gerrit Changes state
-interface GerritChangeState {
-  changes: GerritChange[];
-  currentChange: GerritChange | null;
-  loading: boolean;
-  error: string | null;
-
-  // Actions
-  setChanges: (changes: GerritChange[]) => void;
-  setCurrentChange: (change: GerritChange | null) => void;
-  addChange: (change: GerritChange) => void;
-  updateChange: (id: string, updates: Partial<GerritChange>) => void;
-  removeChange: (id: string) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
-  clearError: () => void;
-}
-
-// Gerrit Comments state
-interface GerritCommentState {
-  comments: GerritComment[];
-  loading: boolean;
-  error: string | null;
-
-  // Actions
-  setComments: (comments: GerritComment[]) => void;
-  addComment: (comment: GerritComment) => void;
-  updateComment: (id: string, updates: Partial<GerritComment>) => void;
-  removeComment: (id: string) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
-  clearError: () => void;
-}
-
-// Gerrit Reviews state
-interface GerritReviewState {
-  reviews: GerritReview[];
-  currentReview: GerritReview | null;
-  loading: boolean;
-  error: string | null;
-
-  // Actions
-  setReviews: (reviews: GerritReview[]) => void;
-  setCurrentReview: (review: GerritReview | null) => void;
-  addReview: (review: GerritReview) => void;
-  updateReview: (id: string, updates: Partial<GerritReview>) => void;
-  removeReview: (id: string) => void;
-  setLoading: (loading: boolean) => void;
-  setError: (error: string | null) => void;
-  clearError: () => void;
-}
-
-// Create stores
-export const useGerritInstances = create<GerritInstanceState>((set) => ({
-  instances: [],
-  activeInstance: null,
+export const useGerritChangesStore = create<GerritChangesStore>((set, get) => ({
+  gerritChanges: [],
   loading: false,
   error: null,
+  lastFetch: 0,
 
-  setInstances: (instances) => set({ instances }),
-  setActiveInstance: (activeInstance) => set({ activeInstance }),
-  addInstance: (instance) => set((state) => ({ instances: [...state.instances, instance] })),
-  updateInstance: (id, updates) => set((state) => ({
-    instances: state.instances.map((inst) => (inst.id === id ? { ...inst, ...updates } : inst))
-  })),
-  removeInstance: (id) => set((state) => ({ instances: state.instances.filter((inst) => inst.id !== id) })),
-  setLoading: (loading) => set({ loading }),
-  setError: (error) => set({ error }),
-  clearError: () => set({ error: null })
+  fetchChanges: async (offset?: number, limit?: number) => {
+    const now = Date.now();
+    const MIN_FETCH_INTERVAL = 10000;
+
+    if (now - get().lastFetch >= MIN_FETCH_INTERVAL) {
+      console.log(`[GerritChangesStore] Fetching changes with debounce: offset=${offset}, limit=${limit}, lastFetch=${get().lastFetch}`);
+
+      try {
+        const changes = await tauriClient.invokeCommand<GerritChange[]>('gerrit_get_gerrit_changes_simple', {
+          offset: offset || 0,
+          limit: limit || 25,
+        });
+
+        console.log(`[GerritChangesStore] Fetched ${changes.length} changes from Gerrit`);
+        console.log(`[GerritChangesStore] Changes:`, JSON.stringify(changes, null, 2));
+
+        set(() => ({
+          gerritChanges: changes,
+          loading: false,
+          error: null,
+          lastFetch: now,
+        }));
+
+      } catch (error) {
+        console.error('[GerritChangesStore] Error fetching changes:', error);
+        set(() => ({
+          loading: false,
+          error: error instanceof Error ? error.message : String(error),
+          lastFetch: get().lastFetch,
+        }));
+      }
+    }
+  },
+
+  getChangeFileContent: async (changeId: string, patchSetNumber: number, filePath: string) => {
+    try {
+      const content = await tauriClient.invokeCommand<string>('gerrit_get_file_content_simple', {
+        changeId,
+        patchSetNumber,
+        filePath,
+      });
+
+      console.log(`[GerritChangesStore] Fetched file content for ${filePath}, length: ${content.length}`);
+      return content;
+
+    } catch (error) {
+      console.error('[GerritChangesStore] Error fetching file content:', error);
+      throw error;
+    }
+  },
+
+  clearData: () => {
+    console.log('[GerritChangesStore] Clearing Gerrit changes data');
+    set(() => ({
+      gerritChanges: [],
+      loading: false,
+      error: null,
+      lastFetch: 0,
+    }));
+  },
 }));
 
-export const useGerritChanges = create<GerritChangeState>((set) => ({
-  changes: [],
-  currentChange: null,
-  loading: false,
-  error: null,
-
-  setChanges: (changes) => set({ changes }),
-  setCurrentChange: (currentChange) => set({ currentChange }),
-  addChange: (change) => set((state) => ({ changes: [...state.changes, change] })),
-  updateChange: (id, updates) => set((state) => ({
-    changes: state.changes.map((ch) => (ch.id === id ? { ...ch, ...updates } : ch))
-  })),
-  removeChange: (id) => set((state) => ({ changes: state.changes.filter((ch) => ch.id !== id) })),
-  setLoading: (loading) => set({ loading }),
-  setError: (error) => set({ error }),
-  clearError: () => set({ error: null })
-}));
-
-export const useGerritComments = create<GerritCommentState>((set) => ({
-  comments: [],
-  loading: false,
-  error: null,
-
-  setComments: (comments) => set({ comments }),
-  addComment: (comment) => set((state) => ({ comments: [...state.comments, comment] })),
-  updateComment: (id, updates) => set((state) => ({
-    comments: state.comments.map((com) => (com.id === id ? { ...com, ...updates } : com))
-  })),
-  removeComment: (id) => set((state) => ({ comments: state.comments.filter((com) => com.id !== id) })),
-  setLoading: (loading) => set({ loading }),
-  setError: (error) => set({ error }),
-  clearError: () => set({ error: null })
-}));
-
-export const useGerritReviews = create<GerritReviewState>((set) => ({
-  reviews: [],
-  currentReview: null,
-  loading: false,
-  error: null,
-
-  setReviews: (reviews) => set({ reviews }),
-  setCurrentReview: (currentReview) => set({ currentReview }),
-  addReview: (review) => set((state) => ({ reviews: [...state.reviews, review] })),
-  updateReview: (id, updates) => set((state) => ({
-    reviews: state.reviews.map((rev) => (rev.id === id ? { ...rev, ...updates } : rev))
-  })),
-  removeReview: (id) => set((state) => ({ reviews: state.reviews.filter((rev) => rev.id !== id) })),
-  setLoading: (loading) => set({ loading }),
-  setError: (error) => set({ error }),
-  clearError: () => set({ error: null })
-}));
+export default useGerritChangesStore;

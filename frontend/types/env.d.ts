@@ -193,7 +193,7 @@ export const validators = {
 
 // Example usage:
 /*
-import { env, validateEnvVars, validators } from './types/env';
+import { env, validateEnvVars, validators } from './env';
 
 // Check if feature is enabled
 if (env.isFeatureEnabled('analytics')) {
